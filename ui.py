@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+"""mc-env panel inside World Properties, using native Blender styling."""
 import bpy
 from . import engine
 
@@ -19,6 +20,7 @@ def section_fields(p, section):
 
 
 BIOME_FIELDS=['grass_color','foliage_color','water_color','oak_color','spruce_color','birch_color','jungle_color','acacia_color','dark_oak_color','mangrove_color']
+# Three-tuples kept in sync with the floating reference UI in overlay.py.
 SECTIONS=[('sun','Sunlight',None),('sky','Sky background',None),('cloud','Clouds','clouds'),('ground','Ground','ground')]
 
 
@@ -49,54 +51,202 @@ def color_grid(layout,p,keys):
         col.prop(p,key,text='')
 
 
-class MCENV_PT_environment(bpy.types.Panel):
-    bl_label='ENVIRONMENT'
-    bl_idname='MCENV_PT_environment'
-    bl_space_type='VIEW_3D'
-    bl_region_type='UI'
-    bl_category='mc-env'
+def clock_text(p):
+    minutes=round(p.time*60)%1440
+    return f'{minutes//60}:{minutes%60:02d}'
+
+
+class _McenvWorldPanel:
+    """Shared registration info for every mc-env panel in the Properties editor."""
+    bl_space_type='PROPERTIES'
+    bl_region_type='WINDOW'
+    bl_context='world'
+
+    @classmethod
+    def poll(cls,context): return context.scene is not None
+
+
+class MCENV_PT_world(_McenvWorldPanel,bpy.types.Panel):
+    bl_label='mc-env'
+    bl_idname='MCENV_PT_world'
 
     def draw_header(self,context): self.layout.label(text='',icon='WORLD')
 
     def draw(self,context):
         layout=self.layout; p=context.scene.mc_env
-        layout.use_property_split=False; layout.use_property_decorate=True
         if not p.enabled:
             layout.label(text='Minecraft-inspired environment')
             layout.operator('mcenv.create',icon='WORLD')
             return
+        layout.use_property_split=False; layout.use_property_decorate=False
         row=layout.row(align=True)
-        row.operator('mcenv.overlay',text='Reference UI',icon='WINDOW')
-        row.operator('mcenv.preview',text='',icon='SHADING_RENDERED')
+        op=row.operator('mcenv.dial',text='Time  '+clock_text(p),icon='TIME'); op.property_name='time'
+        op=row.operator('mcenv.dial',text='Rotation  '+f'{p.rotation:.0f}°',icon='DRIVER_ROTATIONAL_DIFFERENCE'); op.property_name='rotation'
         err=engine._ERRORS.get(context.scene.as_pointer())
         if err:
             box=layout.box(); box.alert=True; box.label(text=err,icon='ERROR')
-        row=layout.row(align=True); row.prop(p,'time'); row.prop(p,'rotation')
-        for key,title,toggle in SECTIONS: section(layout,p,key,title,toggle)
-        layout.label(text='Biome'); layout.prop(p,'biome',text='')
-        if p.biome=='CUSTOM': color_grid(layout,p,BIOME_FIELDS)
-        layout.separator(); layout.label(text='Day scene colors:')
-        color_grid(layout,p,['day_sky','day_clouds','day_sunlight','day_ambient'])
-        layout.separator(); layout.label(text='Night scene colors:')
-        color_grid(layout,p,['night_sky','night_clouds','night_stars','night_ambient'])
+        layout.separator(factor=.4)
+        layout.prop(p,'texture_fps')
+
+
+class MCENV_PT_world_sun(_McenvWorldPanel,bpy.types.Panel):
+    bl_parent_id='MCENV_PT_world'
+    bl_label='Sunlight'
+    bl_idname='MCENV_PT_world_sun'
+    bl_order=0
+    bl_options={'DEFAULT_CLOSED'}
+
+    def draw(self,context):
+        layout=self.layout; p=context.scene.mc_env
+        layout.use_property_split=True; layout.use_property_decorate=False
+        for key in section_fields(p,'sun'): field(layout,p,key)
+
+
+class MCENV_PT_world_sky(_McenvWorldPanel,bpy.types.Panel):
+    bl_parent_id='MCENV_PT_world'
+    bl_label='Sky background'
+    bl_idname='MCENV_PT_world_sky'
+    bl_order=1
+    bl_options={'DEFAULT_CLOSED'}
+
+    def draw(self,context):
+        layout=self.layout; p=context.scene.mc_env
+        layout.use_property_split=True; layout.use_property_decorate=False
+        for key in section_fields(p,'sky'): field(layout,p,key)
+
+
+class MCENV_PT_world_cloud(_McenvWorldPanel,bpy.types.Panel):
+    bl_parent_id='MCENV_PT_world'
+    bl_label='Clouds'
+    bl_idname='MCENV_PT_world_cloud'
+    bl_order=2
+    bl_options={'DEFAULT_CLOSED'}
+
+    def draw_header(self,context): self.layout.prop(context.scene.mc_env,'clouds',text='')
+
+    def draw(self,context):
+        layout=self.layout; p=context.scene.mc_env
+        layout.use_property_split=True; layout.use_property_decorate=False
+        col=layout.column(); col.enabled=p.clouds
+        for key in section_fields(p,'cloud'): field(col,p,key)
+
+
+class MCENV_PT_world_ground(_McenvWorldPanel,bpy.types.Panel):
+    bl_parent_id='MCENV_PT_world'
+    bl_label='Ground'
+    bl_idname='MCENV_PT_world_ground'
+    bl_order=3
+    bl_options={'DEFAULT_CLOSED'}
+
+    def draw_header(self,context): self.layout.prop(context.scene.mc_env,'ground',text='')
+
+    def draw(self,context):
+        layout=self.layout; p=context.scene.mc_env
+        layout.use_property_split=True; layout.use_property_decorate=False
+        col=layout.column(); col.enabled=p.ground
+        for key in section_fields(p,'ground'): field(col,p,key)
+
+
+class MCENV_PT_world_biome(_McenvWorldPanel,bpy.types.Panel):
+    bl_parent_id='MCENV_PT_world'
+    bl_label='Biome'
+    bl_idname='MCENV_PT_world_biome'
+    bl_order=4
+
+    def draw(self,context):
+        layout=self.layout; p=context.scene.mc_env
+        layout.use_property_split=True; layout.use_property_decorate=False
+        layout.prop(p,'biome')
+        if p.biome=='CUSTOM':
+            split=layout.column(); split.use_property_split=False
+            color_grid(split,p,BIOME_FIELDS)
+
+
+class MCENV_PT_world_colors(_McenvWorldPanel,bpy.types.Panel):
+    bl_parent_id='MCENV_PT_world'
+    bl_label='Scene colors'
+    bl_idname='MCENV_PT_world_colors'
+    bl_order=5
+    bl_options={'DEFAULT_CLOSED'}
+
+    def draw(self,context):
+        layout=self.layout; p=context.scene.mc_env
+        layout.use_property_split=True; layout.use_property_decorate=False
+        layout.label(text='Day scene colors:')
+        col=layout.column(align=True)
+        for key in ['day_sky','day_clouds','day_sunlight','day_ambient']: col.prop(p,key)
+        layout.label(text='Night scene colors:')
+        col=layout.column(align=True)
+        for key in ['night_sky','night_clouds','night_stars','night_ambient']: col.prop(p,key)
         layout.prop(p,'twilight')
-        section(layout,p,'fog','Fog','fog'); section(layout,p,'wind','Wind','wind')
-        layout.prop(p,'texture_fps',text='Texture animation speed')
-        layout.separator()
-        row=layout.row(); row.prop(p,'fold_tools',text='Blender tools',icon='TRIA_DOWN' if p.fold_tools else 'TRIA_RIGHT',emboss=False)
-        if p.fold_tools:
-            layout.prop(p,'preview_day_cycle')
-            if p.preview_day_cycle: layout.prop(p,'cycle_frames')
-            layout.operator('mcenv.bind_wind',icon='MOD_WAVE'); layout.operator('mcenv.remove_wind')
-            layout.prop(p,'tint_kind'); layout.operator('mcenv.bind_tint',icon='COLOR'); layout.operator('mcenv.remove_tint')
-            layout.operator('mcenv.bind_atlas',icon='TEXTURE')
-            row=layout.row(align=True); row.operator('mcenv.import_preset',text='Import preset'); row.operator('mcenv.export_preset',text='Export preset')
-            layout.label(text='Image files are saved with .blend, not presets.',icon='INFO')
-            layout.operator('mcenv.reset',icon='LOOP_BACK')
-            layout.operator('mcenv.remove',icon='TRASH')
 
 
-def register(): bpy.utils.register_class(MCENV_PT_environment)
+class MCENV_PT_world_fog(_McenvWorldPanel,bpy.types.Panel):
+    bl_parent_id='MCENV_PT_world'
+    bl_label='Fog'
+    bl_idname='MCENV_PT_world_fog'
+    bl_order=6
+    bl_options={'DEFAULT_CLOSED'}
+
+    def draw_header(self,context): self.layout.prop(context.scene.mc_env,'fog',text='')
+
+    def draw(self,context):
+        layout=self.layout; p=context.scene.mc_env
+        layout.use_property_split=True; layout.use_property_decorate=False
+        col=layout.column(); col.enabled=p.fog
+        for key in section_fields(p,'fog'): field(col,p,key)
 
 
-def unregister(): bpy.utils.unregister_class(MCENV_PT_environment)
+class MCENV_PT_world_wind(_McenvWorldPanel,bpy.types.Panel):
+    bl_parent_id='MCENV_PT_world'
+    bl_label='Wind'
+    bl_idname='MCENV_PT_world_wind'
+    bl_order=7
+    bl_options={'DEFAULT_CLOSED'}
+
+    def draw_header(self,context): self.layout.prop(context.scene.mc_env,'wind',text='')
+
+    def draw(self,context):
+        layout=self.layout; p=context.scene.mc_env
+        layout.use_property_split=True; layout.use_property_decorate=False
+        col=layout.column(); col.enabled=p.wind
+        for key in section_fields(p,'wind'): field(col,p,key)
+
+
+class MCENV_PT_world_tools(_McenvWorldPanel,bpy.types.Panel):
+    bl_parent_id='MCENV_PT_world'
+    bl_label='Blender tools'
+    bl_idname='MCENV_PT_world_tools'
+    bl_order=8
+    bl_options={'DEFAULT_CLOSED'}
+
+    def draw(self,context):
+        layout=self.layout; p=context.scene.mc_env
+        layout.use_property_split=False; layout.use_property_decorate=False
+        row=layout.row(align=True)
+        row.operator('mcenv.overlay',text='Reference UI',icon='WINDOW')
+        row.operator('mcenv.preview',text='',icon='SHADING_RENDERED')
+        layout.prop(p,'preview_day_cycle')
+        if p.preview_day_cycle: layout.prop(p,'cycle_frames')
+        col=layout.column(align=True)
+        col.operator('mcenv.bind_wind',icon='MOD_WAVE'); col.operator('mcenv.remove_wind')
+        layout.prop(p,'tint_kind')
+        col=layout.column(align=True)
+        col.operator('mcenv.bind_tint',icon='COLOR'); col.operator('mcenv.remove_tint')
+        layout.operator('mcenv.bind_atlas',icon='TEXTURE')
+        row=layout.row(align=True); row.operator('mcenv.import_preset',text='Import preset'); row.operator('mcenv.export_preset',text='Export preset')
+        layout.label(text='Image files are saved with .blend, not presets.',icon='INFO')
+        row=layout.row(align=True)
+        row.operator('mcenv.reset',icon='LOOP_BACK'); row.operator('mcenv.remove',icon='TRASH')
+
+
+PANELS=(MCENV_PT_world,MCENV_PT_world_sun,MCENV_PT_world_sky,MCENV_PT_world_cloud,MCENV_PT_world_ground,
+        MCENV_PT_world_biome,MCENV_PT_world_colors,MCENV_PT_world_fog,MCENV_PT_world_wind,MCENV_PT_world_tools)
+
+
+def register():
+    for cls in PANELS: bpy.utils.register_class(cls)
+
+
+def unregister():
+    for cls in reversed(PANELS): bpy.utils.unregister_class(cls)
