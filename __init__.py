@@ -1,18 +1,19 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 bl_info = {
-    "name": "MCenv", "author": "MCenv contributors <sasan.sm23@gmail.com>", "version": (0, 1, 0),
-    "blender": (4, 2, 0), "location": "3D View > Sidebar > MCenv",
+    "name": "MCenv", "author": "MCenv contributors <sasan.sm23@gmail.com>", "version": (0, 2, 0),
+    "blender": (4, 2, 0), "location": "Properties > World > MCenv (plus floating Reference UI)",
     "description": "Minecraft-inspired environment, sky, clouds, biomes, fog and wind",
     "category": "Lighting",
 }
 
-from . import properties, engine, operators, ui, overlay
+from . import properties, engine, operators, ui, dial, overlay
 
 
 def register():
     properties.register()
     operators.register()
     ui.register()
+    dial.register()
     overlay.register()
     engine.register()
 
@@ -20,6 +21,7 @@ def register():
 def unregister():
     overlay.unregister()
     engine.unregister()
+    dial.unregister()
     ui.unregister()
     operators.unregister()
     properties.unregister()
