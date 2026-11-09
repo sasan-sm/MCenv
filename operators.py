@@ -62,9 +62,15 @@ class MCENV_OT_preview(bpy.types.Operator):
     bl_description='Use rendered shading and scene world/lights in the current viewport'
 
     def execute(self,context):
-        if context.area and context.area.type=='VIEW_3D':
-            s=context.space_data.shading
-            s.use_scene_world=True; s.use_scene_lights=True; s.type='RENDERED'
+        # Also works when invoked from the Properties editor; targets the first 3D Viewport.
+        area=context.area
+        if area is None or area.type!='VIEW_3D':
+            area=next((a for a in context.window.screen.areas if a.type=='VIEW_3D'),None)
+        space=area.spaces.active if area else None
+        if space is None or space.type!='VIEW_3D':
+            self.report({'WARNING'},'No 3D Viewport found'); return {'CANCELLED'}
+        s=space.shading
+        s.use_scene_world=True; s.use_scene_lights=True; s.type='RENDERED'
         return {'FINISHED'}
 
 
