@@ -67,18 +67,24 @@ class MCENV_OT_edit(bpy.types.Operator):
 class MCENV_OT_overlay(bpy.types.Operator):
     bl_idname='mcenv.overlay'
     bl_label='Open Reference UI'
-    bl_description='Floating dark English environment panel; drag dials, click fields, scroll to expand. Esc closes; native panel remains available'
+    bl_description='Floating dark environment panel in the 3D Viewport; drag dials, click fields, scroll to expand. Esc closes; native panel remains available'
     bl_options={'INTERNAL'}
 
     @classmethod
-    def poll(cls,context): return context.area is not None and context.area.type=='VIEW_3D'
+    def poll(cls,context): return context.window is not None and context.scene is not None
 
     def invoke(self,context,event):
+        # Invokable from any editor (e.g. World Properties); it always draws in a 3D Viewport.
+        area=context.area
+        if area is None or area.type!='VIEW_3D':
+            area=next((a for a in context.window.screen.areas if a.type=='VIEW_3D'),None)
+            if area is None:
+                self.report({'WARNING'},'Open a 3D Viewport to show the reference UI'); return {'CANCELLED'}
         for old in list(_INSTANCES):
-            if old.area==context.area:
+            if old.area==area:
                 old.finish(context); return {'FINISHED'}
         if not context.scene.mc_env.enabled: bpy.ops.mcenv.create()
-        self.area=context.area; self.region=next((r for r in context.area.regions if r.type=='WINDOW'),context.region)
+        self.area=area; self.region=next((r for r in area.regions if r.type=='WINDOW'),None)
         self.scene=context.scene; self.window=context.window
         self.scroll=0; self.total=700; self.targets=[]; self.drag=None
         self.suspended=False; self.closed=False
@@ -220,7 +226,7 @@ class MCENV_OT_overlay(bpy.types.Operator):
                 self.target(x+9,y,276,30,'edit','texture_fps')
             y-=42
             if 25<y<top-45:
-                text(x+9,y+10,'Blender tools → Sidebar / mc-env',size=11,color=MUTED)
+                text(x+9,y+10,'Blender tools → World Properties / mc-env',size=11,color=MUTED)
             self.total=top-y+self.scroll
             # Fixed header drawn last to conceal scrolled content.
             rect(s,x,top-25,296,25,BG)
