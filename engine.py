@@ -121,20 +121,6 @@ def world_setup(scene):
         rot=node(t,'ShaderNodeVectorRotate','Rotation',rotation_type='AXIS_ANGLE')
         rot.inputs['Axis'].default_value=(0,0,1)
         link(t,coords,'Normal',rot,'Vector')
-        vor=node(t,'ShaderNodeTexVoronoi','Stars',distance='EUCLIDEAN')
-        vor.inputs['Scale'].default_value=140
-        link(t,rot,'Vector',vor,'Vector')
-        threshold=math_node(t,'Star size','LESS_THAN',b=.045)
-        link(t,vor,'Distance',threshold,0)
-        sep=node(t,'ShaderNodeSeparateXYZ','Sky height')
-        link(t,coords,'Normal',sep,0)
-        above=math_node(t,'Above horizon','GREATER_THAN',b=.02)
-        link(t,sep,'Z',above,0)
-        mask=math_node(t,'Star mask','MULTIPLY')
-        link(t,above,0,mask,0); link(t,threshold,0,mask,1)
-        stars=node(t,'ShaderNodeMixRGB','Star color',blend_type='MIX')
-        link(t,mask,0,stars,0)
-        link(t,stars,0,sky,'Color')
         # Custom images are camera-only, keeping ambient under independent control.
         image=node(t,'ShaderNodeTexImage','Flat image',interpolation='Closest')
         link(t,coords,'Window',image,'Vector')
@@ -232,6 +218,37 @@ def celestial(scene, role, direction, scale, tint, image, tilt):
     alpha.inputs[0].default_value=1
     if image:
         link(t,tex,'Color',em,0); link(t,tex,'Alpha',alpha,0)
+
+
+def stars_setup(scene, night):
+    """Real square-star dome over the whole sky; fades in at dusk, out at dawn."""
+    p=scene.mc_env; o=object_for(scene,'Stars')
+    sig=str((round(p.stars_size,3),))
+    if o.get('sig') != sig:
+        rng=random.Random(20); verts=[]; faces=[]
+        # Uniform directions over the full sky above the horizon (both hemispheres).
+        for i in range(420):
+            z=rng.uniform(.03,1); a=rng.uniform(0,math.tau)
+            r=math.sqrt(max(0,1-z*z))
+            d=Vector((math.cos(a)*r,math.sin(a)*r,z))
+            s=(2.2 if rng.random()<.08 else 1)*p.stars_size*140
+            t1=d.cross(Vector((0,0,1)))
+            if t1.length<1e-4: t1=Vector((1,0,0))
+            t1.normalize(); t2=t1.cross(d).normalized()
+            c=d*900
+            for dx,dy in [(-1,-1),(1,-1),(1,1),(-1,1)]:
+                verts.append(tuple(c+t1*(s*.5*dx)+t2*(s*.5*dy)))
+            i0=len(verts)-4; faces.append((i0,i0+1,i0+2,i0+3))
+        o.data.clear_geometry(); o.data.from_pydata(verts,[],faces); o.data.update()
+        o['sig']=sig
+    o.location=scene.camera.matrix_world.translation if scene.camera else Vector((0,0,0))
+    o.rotation_euler=(0,0,math.radians(p.rotation))
+    o.hide_render=p.sky_mode!='MINECRAFT'; o.hide_viewport=o.hide_render
+    m=emission_mat(scene,'Stars'); put_mat(o,m); t=m.node_tree
+    em=t.nodes['Emission']
+    em.inputs[0].default_value=rgba(p.night_stars); em.inputs[1].default_value=p.stars_strength
+    t.nodes['Alpha'].inputs[0].default_value=night
+    if hasattr(m,'surface_render_method'): m.surface_render_method='DITHERED'
 
 
 def ground_setup(scene):
@@ -347,16 +364,16 @@ def sync(scene):
         elevation=math.sin((hour-6)*math.tau/24)
         daylight=max(0,min(1,(elevation+.12)/.42)); night=1-daylight
         twilight=max(0,1-abs(elevation)/.28)*int(p.twilight)
+        # Stars start appearing shortly after sunset and vanish near sunrise.
+        star_night=max(0,min(1,(.05-elevation)/.25))
         sky=mix(p.night_sky,p.day_sky,daylight)
         sky=mix(sky,rgb('f6a16a'),twilight*.5)
         if p.fog and p.fog_sky: sky=mix(sky,p.fog_color if p.fog_custom else sky,.35)
         w=world_setup(scene); t=w.node_tree
         ambient=t.nodes['Ambient']; ambient.inputs[0].default_value=rgba(mix(p.night_ambient,p.day_ambient,daylight)); ambient.inputs[1].default_value=p.ambient_strength
         t.nodes['Rotation'].inputs['Angle'].default_value=math.radians(p.rotation+p.background_rotation)
-        t.nodes['Star size'].inputs[1].default_value=p.stars_size
-        stars=t.nodes['Star color']; stars.inputs[1].default_value=rgba(sky)
-        stars.inputs[2].default_value=rgba(mix(sky,tuple(v*p.stars_strength for v in p.night_stars),night))
-        visible=t.nodes['Visible sky']; desired=stars
+        visible=t.nodes['Visible sky']
+        desired=None
         if p.sky_mode=='CUSTOM' and p.background_image:
             name={'IMAGE':'Flat image','BOX':'Box image','EQUIRECTANGULAR':'Panorama'}[p.background_type]
             desired=t.nodes[name]; desired.image=p.background_image
@@ -365,8 +382,9 @@ def sync(scene):
                 iw,ih=p.background_image.size[:]
                 aspect=(scene.render.resolution_x/scene.render.resolution_y)/(iw/max(1,ih))
             t.nodes['Image aspect'].inputs[1].default_value=(aspect,1,1)
-        if not visible.inputs['Color'].links or visible.inputs['Color'].links[0].from_node != desired:
-            link(t,desired,'Color' if desired!=stars else 0,visible,'Color')
+        for l in list(visible.inputs['Color'].links): t.links.remove(l)
+        if desired is not None: link(t,desired,'Color',visible,'Color')
+        else: visible.inputs['Color'].default_value=rgba(sky)
         a=(hour-6)*math.tau/24; heading=math.radians(p.rotation)
         direction=Vector((math.cos(a)*math.cos(heading),math.cos(a)*math.sin(heading),math.sin(a)))
         for role,d,energy,c in [('Sunlight',direction,p.sun_strength*daylight,mix(p.day_sunlight,rgb('ffad66'),twilight*.65)),('Moonlight',-direction,p.night_strength*night,rgb('a9c2ff'))]:
@@ -374,6 +392,7 @@ def sync(scene):
             o.data.energy=energy; o.data.color=c; o.data.angle=math.radians(p.sun_angle)
         celestial(scene,'Sun',direction,p.sun_scale,p.day_sunlight,p.sun_image,p.sun_tilt)
         celestial(scene,'Moon',-direction,p.moon_scale,rgb('dce7ff'),p.moon_image or moon_image(scene),p.moon_tilt)
+        stars_setup(scene,star_night)
         ground_setup(scene)
         clouds_setup(scene,sec,mix(p.night_clouds,p.day_clouds,daylight))
         fog_setup(scene,sky)
