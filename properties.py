@@ -125,13 +125,6 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     preview_day_cycle: BoolProperty(name='Animate day cycle', default=False, update=update)
     cycle_frames: IntProperty(name='Frames per day', default=2400, min=24, update=update)
     tint_kind: EnumProperty(name='Tint kind', items=[(x,x.replace('_',' ').title(),'') for x in ['GRASS','FOLIAGE','WATER','OAK','SPRUCE','BIRCH','JUNGLE','ACACIA','DARK_OAK','MANGROVE']])
-    fold_sun: BoolProperty(default=False, options={'SKIP_SAVE'})
-    fold_sky: BoolProperty(default=False, options={'SKIP_SAVE'})
-    fold_cloud: BoolProperty(default=False, options={'SKIP_SAVE'})
-    fold_ground: BoolProperty(default=False, options={'SKIP_SAVE'})
-    fold_fog: BoolProperty(default=False, options={'SKIP_SAVE'})
-    fold_wind: BoolProperty(default=False, options={'SKIP_SAVE'})
-    fold_tools: BoolProperty(default=False, options={'SKIP_SAVE'})
 
 
 def register():
