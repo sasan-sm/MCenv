@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Circular Time/Rotation dial for the World Properties panel.
+"""Circular Time/Rotation dial, available from the Quick Favorites (Q) menu.
 
 Blender's Python UI API cannot draw custom widgets inside a Properties panel,
-so the dials live on a POST_PIXEL overlay of the Properties editor, spawned
-right at the mouse when the Time or Rotation button is clicked. The visual
-language (ring, gear knob, crescent marker, clock caption) matches the
-floating reference UI in overlay.py.
+so the dial lives on a POST_PIXEL overlay of whichever editor it was invoked
+from (normally the 3D Viewport via the Q menu). The backdrop is translucent so
+the scene stays visible behind it. The visual language (ring, gear knob,
+crescent marker, clock caption) keeps the original mc-env dial look.
 """
 import math
 import bpy
@@ -13,16 +13,26 @@ import blf
 import gpu
 from bpy.props import StringProperty
 from gpu_extras.batch import batch_for_shader
+from .ui import field
 
 TEXT=(.78,.78,.78,1)
 BRIGHT=(.92,.92,.92,1)
-MUTED=(.44,.44,.44,1)
-BG=(.08,.08,.08,.93)
-RING=(.42,.42,.42,1)
-KNOB=(.62,.62,.62,1)
+MUTED=(.50,.50,.50,1)
+BG=(.08,.08,.08,.30)      # translucent, so the scene is visible behind the dial
+SOLID=(.08,.08,.08,.85)   # small backdrops for knob and marker, kept readable
+RING=(.45,.45,.45,1)
+KNOB=(.65,.65,.65,1)
 
 VALID=('time','rotation')
 CENTER_PICK_RADIUS=20.0
+
+# Editors the dial can be drawn over, resolved lazily at invoke time.
+_SPACE_CLASSES=(('VIEW_3D','SpaceView3D'),('PROPERTIES','SpaceProperties'),
+                ('NODE_EDITOR','SpaceNodeEditor'),('IMAGE_EDITOR','SpaceImageEditor'),
+                ('SEQUENCE_EDITOR','SpaceSequenceEditor'),('GRAPH_EDITOR','SpaceGraphEditor'),
+                ('CLIP_EDITOR','SpaceClipEditor'),('OUTLINER','SpaceOutliner'),
+                ('TOPBAR','SpaceTopbar'),('INFO','SpaceInfo'),('TEXT_EDITOR','SpaceTextEditor'),
+                ('SPREADSHEET','SpaceSpreadsheet'),('FILE_BROWSER','SpaceFileBrowser'))
 
 
 def shape(shader,mode,vertices,color):
@@ -47,10 +57,30 @@ def caption(p,key):
     return f'{p.rotation:.0f}°'
 
 
+def _space_class(area):
+    for kind,name in _SPACE_CLASSES:
+        if area.type==kind: return getattr(bpy.types,name,None)
+    return None
+
+
+class MCENV_OT_edit(bpy.types.Operator):
+    bl_idname='mcenv.edit_field'
+    bl_label='Environment Setting'
+    bl_options={'INTERNAL','UNDO'}
+    property_name: StringProperty()
+
+    def draw(self,context):
+        if self.property_name in context.scene.mc_env.bl_rna.properties:
+            field(self.layout,context.scene.mc_env,self.property_name)
+            self.layout.label(text='Right-click the field for keyframes.',icon='KEY_HLT')
+
+    def execute(self,context): return {'FINISHED'}
+
+
 class MCENV_OT_dial(bpy.types.Operator):
     bl_idname='mcenv.dial'
-    bl_label='Adjust With Circular Dial'
-    bl_description='Move the mouse around the dial to adjust, click to confirm, click the dial center to type a value, scroll for fine steps, Esc cancels'
+    bl_label='mc-env Circular Dial'
+    bl_description='Move the mouse around the translucent dial to adjust, click to confirm, click the dial center to type a value, scroll for fine steps, Esc cancels'
     bl_options={'INTERNAL'}
 
     property_name: StringProperty()
@@ -63,8 +93,18 @@ class MCENV_OT_dial(bpy.types.Operator):
     def invoke(self,context,event):
         if self.property_name not in VALID: return {'CANCELLED'}
         self.scene=context.scene; self.window=context.window; self.area=context.area
-        self.region=context.region if context.region and context.region.type=='WINDOW' else next((r for r in self.area.regions if r.type=='WINDOW'),None)
+        # Always draw relative to the editor's own WINDOW region, even when the
+        # operator is invoked from a popup menu (Quick Favorites) with a temp region.
+        self.region=next((r for r in self.area.regions if r.type=='WINDOW'),None)
+        if self.region is None and context.region and context.region.type=='WINDOW':
+            self.region=context.region
         if self.region is None: return {'CANCELLED'}
+        space_cls=_space_class(self.area)
+        if space_cls is None:
+            self.report({'INFO'},'The circular dial is not available in this editor; edit the value directly.')
+            bpy.ops.mcenv.edit_field('INVOKE_DEFAULT',property_name=self.property_name)
+            return {'CANCELLED'}
+        self.space_cls=space_cls
         p=self.scene.mc_env
         self.initial=getattr(p,self.property_name)
         self.moved=False; self.seen_press=False
@@ -73,7 +113,7 @@ class MCENV_OT_dial(bpy.types.Operator):
                      min(max(event.mouse_y-self.region.y,self.radius+34),self.region.height-self.radius-46))
         self.shader=gpu.shader.from_builtin('UNIFORM_COLOR')
         try:
-            self.handle=bpy.types.SpaceProperties.draw_handler_add(self.draw_dial,(),'WINDOW','POST_PIXEL')
+            self.handle=space_cls.draw_handler_add(self.draw_dial,(),'WINDOW','POST_PIXEL')
         except (AttributeError,RuntimeError):
             self.handle=None
         if self.handle is None:
@@ -88,7 +128,7 @@ class MCENV_OT_dial(bpy.types.Operator):
         handle=getattr(self,'handle',None)
         self.handle=None
         if handle:
-            try: bpy.types.SpaceProperties.draw_handler_remove(handle,'WINDOW')
+            try: getattr(self,'space_cls',bpy.types.SpaceView3D).draw_handler_remove(handle,'WINDOW')
             except Exception: pass
         try: self.area.tag_redraw()
         except Exception: pass
@@ -99,7 +139,7 @@ class MCENV_OT_dial(bpy.types.Operator):
         else: p.rotation=round(((value+180)%360)-180)
 
     def value_at(self,angle_deg):
-        # Matches the reference UI mapping: time 0h at the bottom, rotation 0° at the top.
+        # Matches the classic mc-env dial mapping: time 0h at the bottom, rotation 0° at the top.
         if self.property_name=='time': return ((angle_deg+90)%360)/15
         return angle_deg-90
 
@@ -121,7 +161,7 @@ class MCENV_OT_dial(bpy.types.Operator):
             value=p.time if self.property_name=='time' else p.rotation
             a=(value/24*math.tau-math.pi/2) if self.property_name=='time' else math.radians(value)+math.pi/2
             hx=cx+math.cos(a)*R; hy=cy+math.sin(a)*R
-            rect(s,hx-10,hy-10,20,20,(*BG[:3],1))
+            rect(s,hx-10,hy-10,20,20,SOLID)
             for j in range(8):
                 aa=j*math.tau/8
                 shape(s,'LINES',[(hx+math.cos(aa)*6,hy+math.sin(aa)*6),(hx+math.cos(aa)*9,hy+math.sin(aa)*9)],KNOB)
@@ -130,7 +170,7 @@ class MCENV_OT_dial(bpy.types.Operator):
             text(cx,cy+20,'Time' if self.property_name=='time' else 'Rotation',size=10,color=MUTED,center=True)
             text(cx,cy-24,caption(p,self.property_name),size=17,color=BRIGHT,center=True)
             mx=cx-math.cos(a)*R; my=cy-math.sin(a)*R
-            rect(s,mx-10,my-10,20,20,(*BG[:3],1))
+            rect(s,mx-10,my-10,20,20,SOLID)
             crescent=[(mx+math.cos(i*math.pi/20-math.pi/2)*7,my+math.sin(i*math.pi/20-math.pi/2)*7) for i in range(21)]
             shape(s,'LINE_STRIP',crescent,MUTED)
             inner=[(mx+math.cos(i*math.pi/20-math.pi/2)*4,my+math.sin(i*math.pi/20-math.pi/2)*5) for i in range(21)]
@@ -166,7 +206,7 @@ class MCENV_OT_dial(bpy.types.Operator):
             self.seen_press=True; return {'RUNNING_MODAL'}
         if event.type=='LEFTMOUSE' and event.value=='RELEASE':
             if not self.seen_press:
-                # Tail release of the button click that started the dial; keep it open.
+                # Tail release of the click that opened the dial; keep it open.
                 return {'RUNNING_MODAL'}
             self.finish(context)
             mx=event.mouse_x-r.x; my=event.mouse_y-r.y
@@ -183,12 +223,25 @@ class MCENV_OT_dial(bpy.types.Operator):
         return {'PASS_THROUGH'}
 
 
-CLASSES=(MCENV_OT_dial,)
+def _quick_favorites_draw(menu,context):
+    p=getattr(context.scene,'mc_env',None) if context.scene else None
+    if p is None or not p.enabled: return
+    col=menu.layout.column(align=True)
+    col.label(text='mc-env',icon='WORLD')
+    op=col.operator('mcenv.dial',text='Time (circular dial)',icon='TIME'); op.property_name='time'
+    op=col.operator('mcenv.dial',text='Rotation (circular dial)',icon='DRIVER_ROTATIONAL_DIFFERENCE'); op.property_name='rotation'
+
+
+CLASSES=(MCENV_OT_edit,MCENV_OT_dial)
 
 
 def register():
     for cls in CLASSES: bpy.utils.register_class(cls)
+    try: bpy.types.SCREEN_MT_user_menu.append(_quick_favorites_draw)
+    except Exception: pass
 
 
 def unregister():
+    try: bpy.types.SCREEN_MT_user_menu.remove(_quick_favorites_draw)
+    except Exception: pass
     for cls in reversed(CLASSES): bpy.utils.unregister_class(cls)
