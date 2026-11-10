@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import json
 import math
+import os
+import shutil
 import bpy
 from bpy.props import StringProperty, BoolProperty
 from bpy_extras.io_utils import ImportHelper, ExportHelper
@@ -53,24 +55,6 @@ class MCENV_OT_remove(bpy.types.Operator):
         for data in list(bpy.data.materials):
             if data.name.startswith('mc-env '+p.owner_id+' ') and data.users==0: bpy.data.materials.remove(data)
         if world and world.name.startswith('mc-env '+p.owner_id) and world.users==0: bpy.data.worlds.remove(world)
-        return {'FINISHED'}
-
-
-class MCENV_OT_preview(bpy.types.Operator):
-    bl_idname='mcenv.preview'
-    bl_label='Use Scene Lighting'
-    bl_description='Use rendered shading and scene world/lights in the current viewport'
-
-    def execute(self,context):
-        # Also works when invoked from the Properties editor; targets the first 3D Viewport.
-        area=context.area
-        if area is None or area.type!='VIEW_3D':
-            area=next((a for a in context.window.screen.areas if a.type=='VIEW_3D'),None)
-        space=area.spaces.active if area else None
-        if space is None or space.type!='VIEW_3D':
-            self.report({'WARNING'},'No 3D Viewport found'); return {'CANCELLED'}
-        s=space.shading
-        s.use_scene_world=True; s.use_scene_lights=True; s.type='RENDERED'
         return {'FINISHED'}
 
 
@@ -208,6 +192,44 @@ class MCENV_OT_atlas(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MCENV_OT_uninstall(bpy.types.Operator):
+    bl_idname='mcenv.uninstall'
+    bl_label='Uninstall mc-env'
+    bl_description='Remove the mc-env environment from every scene, restore previous worlds, and delete the add-on from Blender. Save your .blend first'
+    bl_options={'REGISTER'}
+
+    def invoke(self,context,event): return context.window_manager.invoke_confirm(self,event)
+
+    def execute(self,context):
+        for scene in list(bpy.data.scenes):
+            if scene.library: continue
+            try:
+                with context.temp_override(scene=scene):
+                    bpy.ops.mcenv.remove('EXEC_DEFAULT')
+            except Exception: pass
+        pkg=__package__; pkg_dir=os.path.dirname(__file__)
+
+        def finish():
+            try:
+                import addon_utils
+                addon_utils.disable(pkg,default_set=True)
+            except Exception: pass
+            try:
+                import sys
+                for name in [m for m in list(sys.modules) if m==pkg or m.startswith(pkg+'.')]:
+                    del sys.modules[name]
+            except Exception: pass
+            try: shutil.rmtree(pkg_dir,ignore_errors=True)
+            except Exception: pass
+            try: bpy.ops.wm.save_userpref()
+            except Exception: pass
+            return None
+
+        bpy.app.timers.register(finish,first_interval=.3)
+        self.report({'INFO'},'mc-env removed from all scenes; the add-on is being uninstalled')
+        return {'FINISHED'}
+
+
 SKIP={'rna_type','name','enabled','owner_id','previous_world','previous_world_empty','tint_kind'}
 
 
@@ -286,7 +308,7 @@ class MCENV_OT_reset(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_preview,MCENV_OT_image,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_tint,MCENV_OT_untint,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
+CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_uninstall,MCENV_OT_image,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_tint,MCENV_OT_untint,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
 
 
 def register():
