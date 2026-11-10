@@ -20,8 +20,6 @@ def section_fields(p, section):
 
 
 BIOME_FIELDS=['grass_color','foliage_color','water_color','oak_color','spruce_color','birch_color','jungle_color','acacia_color','dark_oak_color','mangrove_color']
-# Three-tuples kept in sync with the floating reference UI in overlay.py.
-SECTIONS=[('sun','Sunlight',None),('sky','Sky background',None),('cloud','Clouds','clouds'),('ground','Ground','ground')]
 
 
 def field(layout,p,key):
@@ -33,27 +31,12 @@ def field(layout,p,key):
     else: layout.prop(p,key)
 
 
-def section(layout,p,key,title,toggle=None):
-    row=layout.row(align=True)
-    row.prop(p,'fold_'+key,text=title,icon='TRIA_DOWN' if getattr(p,'fold_'+key) else 'TRIA_RIGHT',emboss=False)
-    if toggle: row.prop(p,toggle,text='')
-    if getattr(p,'fold_'+key):
-        col=layout.column(align=True)
-        if toggle: col.enabled=getattr(p,toggle)
-        for name in section_fields(p,key): field(col,p,name)
-
-
 def color_grid(layout,p,keys):
     grid=layout.grid_flow(columns=2,even_columns=True,align=True)
     for key in keys:
         col=grid.column(align=True)
         col.label(text=p.bl_rna.properties[key].name)
         col.prop(p,key,text='')
-
-
-def clock_text(p):
-    minutes=round(p.time*60)%1440
-    return f'{minutes//60}:{minutes%60:02d}'
 
 
 class _McenvWorldPanel:
@@ -78,14 +61,14 @@ class MCENV_PT_world(_McenvWorldPanel,bpy.types.Panel):
             layout.label(text='Minecraft-inspired environment')
             layout.operator('mcenv.create',icon='WORLD')
             return
-        layout.use_property_split=False; layout.use_property_decorate=False
-        row=layout.row(align=True)
-        op=row.operator('mcenv.dial',text='Time  '+clock_text(p),icon='TIME'); op.property_name='time'
-        op=row.operator('mcenv.dial',text='Rotation  '+f'{p.rotation:.0f}°',icon='DRIVER_ROTATIONAL_DIFFERENCE'); op.property_name='rotation'
+        # Native draggable sliders with the keyframe (Animate Property) column.
+        layout.use_property_split=True; layout.use_property_decorate=True
+        col=layout.column(align=True)
+        col.prop(p,'time'); col.prop(p,'rotation')
         err=engine._ERRORS.get(context.scene.as_pointer())
         if err:
-            box=layout.box(); box.alert=True; box.label(text=err,icon='ERROR')
-        layout.separator(factor=.4)
+            split=layout.column(); split.use_property_split=False
+            box=split.box(); box.alert=True; box.label(text=err,icon='ERROR')
         layout.prop(p,'texture_fps')
 
 
@@ -98,7 +81,7 @@ class MCENV_PT_world_sun(_McenvWorldPanel,bpy.types.Panel):
 
     def draw(self,context):
         layout=self.layout; p=context.scene.mc_env
-        layout.use_property_split=True; layout.use_property_decorate=False
+        layout.use_property_split=True; layout.use_property_decorate=True
         for key in section_fields(p,'sun'): field(layout,p,key)
 
 
@@ -111,7 +94,7 @@ class MCENV_PT_world_sky(_McenvWorldPanel,bpy.types.Panel):
 
     def draw(self,context):
         layout=self.layout; p=context.scene.mc_env
-        layout.use_property_split=True; layout.use_property_decorate=False
+        layout.use_property_split=True; layout.use_property_decorate=True
         for key in section_fields(p,'sky'): field(layout,p,key)
 
 
@@ -126,7 +109,7 @@ class MCENV_PT_world_cloud(_McenvWorldPanel,bpy.types.Panel):
 
     def draw(self,context):
         layout=self.layout; p=context.scene.mc_env
-        layout.use_property_split=True; layout.use_property_decorate=False
+        layout.use_property_split=True; layout.use_property_decorate=True
         col=layout.column(); col.enabled=p.clouds
         for key in section_fields(p,'cloud'): field(col,p,key)
 
@@ -142,7 +125,7 @@ class MCENV_PT_world_ground(_McenvWorldPanel,bpy.types.Panel):
 
     def draw(self,context):
         layout=self.layout; p=context.scene.mc_env
-        layout.use_property_split=True; layout.use_property_decorate=False
+        layout.use_property_split=True; layout.use_property_decorate=True
         col=layout.column(); col.enabled=p.ground
         for key in section_fields(p,'ground'): field(col,p,key)
 
@@ -155,7 +138,7 @@ class MCENV_PT_world_biome(_McenvWorldPanel,bpy.types.Panel):
 
     def draw(self,context):
         layout=self.layout; p=context.scene.mc_env
-        layout.use_property_split=True; layout.use_property_decorate=False
+        layout.use_property_split=True; layout.use_property_decorate=True
         layout.prop(p,'biome')
         if p.biome=='CUSTOM':
             split=layout.column(); split.use_property_split=False
@@ -171,7 +154,7 @@ class MCENV_PT_world_colors(_McenvWorldPanel,bpy.types.Panel):
 
     def draw(self,context):
         layout=self.layout; p=context.scene.mc_env
-        layout.use_property_split=True; layout.use_property_decorate=False
+        layout.use_property_split=True; layout.use_property_decorate=True
         layout.label(text='Day scene colors:')
         col=layout.column(align=True)
         for key in ['day_sky','day_clouds','day_sunlight','day_ambient']: col.prop(p,key)
@@ -192,7 +175,7 @@ class MCENV_PT_world_fog(_McenvWorldPanel,bpy.types.Panel):
 
     def draw(self,context):
         layout=self.layout; p=context.scene.mc_env
-        layout.use_property_split=True; layout.use_property_decorate=False
+        layout.use_property_split=True; layout.use_property_decorate=True
         col=layout.column(); col.enabled=p.fog
         for key in section_fields(p,'fog'): field(col,p,key)
 
@@ -208,7 +191,7 @@ class MCENV_PT_world_wind(_McenvWorldPanel,bpy.types.Panel):
 
     def draw(self,context):
         layout=self.layout; p=context.scene.mc_env
-        layout.use_property_split=True; layout.use_property_decorate=False
+        layout.use_property_split=True; layout.use_property_decorate=True
         col=layout.column(); col.enabled=p.wind
         for key in section_fields(p,'wind'): field(col,p,key)
 
@@ -223,9 +206,6 @@ class MCENV_PT_world_tools(_McenvWorldPanel,bpy.types.Panel):
     def draw(self,context):
         layout=self.layout; p=context.scene.mc_env
         layout.use_property_split=False; layout.use_property_decorate=False
-        row=layout.row(align=True)
-        row.operator('mcenv.overlay',text='Reference UI',icon='WINDOW')
-        row.operator('mcenv.preview',text='',icon='SHADING_RENDERED')
         layout.prop(p,'preview_day_cycle')
         if p.preview_day_cycle: layout.prop(p,'cycle_frames')
         col=layout.column(align=True)
@@ -238,6 +218,7 @@ class MCENV_PT_world_tools(_McenvWorldPanel,bpy.types.Panel):
         layout.label(text='Image files are saved with .blend, not presets.',icon='INFO')
         row=layout.row(align=True)
         row.operator('mcenv.reset',icon='LOOP_BACK'); row.operator('mcenv.remove',icon='TRASH')
+        layout.operator('mcenv.uninstall',icon='X',text='Uninstall mc-env',)
 
 
 PANELS=(MCENV_PT_world,MCENV_PT_world_sun,MCENV_PT_world_sky,MCENV_PT_world_cloud,MCENV_PT_world_ground,
