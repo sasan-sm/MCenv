@@ -198,11 +198,7 @@ class MCENV_OT_uninstall(bpy.types.Operator):
     bl_description='Remove the mc-env environment from every scene, restore previous worlds, and delete the add-on from Blender. Save your .blend first'
     bl_options={'REGISTER'}
 
-    def invoke(self,context,event):
-        return context.window_manager.invoke_confirm(self,event,
-            title='Uninstall mc-env',
-            message='Remove the environment from every scene and delete the add-on files from Blender? Save your .blend first; this cannot be undone.',
-            confirm_text='Uninstall')
+    def invoke(self,context,event): return context.window_manager.invoke_confirm(self,event)
 
     def execute(self,context):
         for scene in list(bpy.data.scenes):
@@ -214,9 +210,15 @@ class MCENV_OT_uninstall(bpy.types.Operator):
         pkg=__package__; pkg_dir=os.path.dirname(__file__)
 
         def finish():
+            # Official Blender removal (same operator the Preferences view uses),
+            # which disables the add-on, deletes its files and refreshes the list.
             try:
-                import addon_utils
-                addon_utils.disable(pkg,default_set=True)
+                bpy.ops.preferences.addon_remove('EXEC_DEFAULT',module=pkg)
+            except Exception: pass
+            try:
+                if os.path.isdir(pkg_dir):
+                    import addon_utils
+                    addon_utils.disable(pkg,default_set=True)
             except Exception: pass
             try:
                 import sys
@@ -226,10 +228,6 @@ class MCENV_OT_uninstall(bpy.types.Operator):
             try: shutil.rmtree(pkg_dir,ignore_errors=True)
             except Exception: pass
             try: bpy.ops.wm.save_userpref()
-            except Exception: pass
-            try:
-                import addon_utils
-                addon_utils.modules_refresh()
             except Exception: pass
             return None
 
