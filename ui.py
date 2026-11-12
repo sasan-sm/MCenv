@@ -62,16 +62,9 @@ class MCENV_PT_world(_McenvWorldPanel,bpy.types.Panel):
             layout.operator('mcenv.create',icon='WORLD')
             return
         # Native draggable sliders with the keyframe (Animate Property) column.
-        # The small dial icons reopen the circular dial and can be right-clicked
-        # -> Add to Quick Favorites (Blender only favorites operator buttons).
         layout.use_property_split=True; layout.use_property_decorate=True
         col=layout.column(align=True)
-        row=col.row(align=True)
-        row.prop(p,'time')
-        row.operator('mcenv.dial',text='',icon='HUE_BRIGHTNESS').property_name='time'
-        row=col.row(align=True)
-        row.prop(p,'rotation')
-        row.operator('mcenv.dial',text='',icon='HUE_BRIGHTNESS').property_name='rotation'
+        col.prop(p,'time'); col.prop(p,'rotation')
         err=engine._ERRORS.get(context.scene.as_pointer())
         if err:
             split=layout.column(); split.use_property_split=False

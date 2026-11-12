@@ -11,9 +11,10 @@ import math
 import bpy
 import blf
 import gpu
-from bpy.props import StringProperty
+from bpy.props import StringProperty, BoolProperty
 from gpu_extras.batch import batch_for_shader
 from .ui import field
+from .properties import MCENV_Settings
 
 TEXT=(.78,.78,.78,1)
 BRIGHT=(.92,.92,.92,1)
@@ -223,25 +224,108 @@ class MCENV_OT_dial(bpy.types.Operator):
         return {'PASS_THROUGH'}
 
 
+class MCENV_OT_quick_favorite(bpy.types.Operator):
+    bl_idname='mcenv.quick_favorite'
+    bl_label='Quick Favorites: mc-env Field'
+    bl_description='Show or hide this mc-env field in the Quick Favorites (Q) menu; the choice is stored in the add-on preferences'
+    bl_options={'REGISTER','INTERNAL'}
+
+    property_name: StringProperty()
+
+    @classmethod
+    def poll(cls,context):
+        return context.scene is not None and hasattr(context.scene,'mc_env')
+
+    def execute(self,context):
+        if self.property_name not in VALID: return {'CANCELLED'}
+        prefs=_prefs(context)
+        if prefs is None:
+            self.report({'ERROR'},'mc-env preferences are unavailable'); return {'CANCELLED'}
+        key='quick_fav_'+self.property_name
+        added=not getattr(prefs,key)
+        setattr(prefs,key,added)
+        try: context.preferences.is_dirty=True
+        except Exception: pass
+        name=context.scene.mc_env.bl_rna.properties[self.property_name].name
+        self.report({'INFO'},(name+' added to Quick Favorites') if added else (name+' removed from Quick Favorites'))
+        return {'FINISHED'}
+
+
+class MCENV_Preferences(bpy.types.AddonPreferences):
+    bl_idname=__package__
+    quick_fav_time: BoolProperty(name='Time in Quick Favorites', description='Show a Time entry in the Quick Favorites (Q) menu', default=False)
+    quick_fav_rotation: BoolProperty(name='Rotation in Quick Favorites', description='Show a Rotation entry in the Quick Favorites (Q) menu', default=False)
+
+    def draw(self,context):
+        layout=self.layout
+        layout.label(text='Right-click the mc-env Time or Rotation fields to add or remove them here.',icon='BOOKMARKS')
+
+
+def _prefs(context):
+    try: return context.preferences.addons[__package__].preferences
+    except Exception: return None
+
+
+def _button_context_draw(menu,context):
+    """Shown when right-clicking an mc-env Time/Rotation field in any editor.
+
+    Blender's own 'Add to Quick Favorites' entry only appears for boolean
+    properties, so these float fields provide their own equivalent here.
+    """
+    ptr=getattr(context,'button_pointer',None)
+    prop=getattr(context,'button_prop',None)
+    if ptr is None or prop is None or not isinstance(ptr,MCENV_Settings): return
+    ident=getattr(prop,'identifier','')
+    if ident not in VALID: return
+    prefs=_prefs(context)
+    if prefs is None: return
+    added=getattr(prefs,'quick_fav_'+ident,False)
+    op=menu.layout.operator('mcenv.quick_favorite',icon='MENU_PANEL',
+                            text='Remove from Quick Favorites' if added else 'Add to Quick Favorites')
+    op.property_name=ident
+
+
 def _quick_favorites_draw(menu,context):
     p=getattr(context.scene,'mc_env',None) if context.scene else None
-    if p is None or not p.enabled: return
+    prefs=_prefs(context)
+    show_dials=p is not None and p.enabled
+    show_fields=prefs is not None and (prefs.quick_fav_time or prefs.quick_fav_rotation)
+    if not show_dials and not show_fields: return
     col=menu.layout.column(align=True)
     col.label(text='mc-env',icon='WORLD')
-    op=col.operator('mcenv.dial',text='Time (circular dial)',icon='TIME'); op.property_name='time'
-    op=col.operator('mcenv.dial',text='Rotation (circular dial)',icon='DRIVER_ROTATIONAL_DIFFERENCE'); op.property_name='rotation'
+    if show_fields:
+        if prefs.quick_fav_time:
+            op=col.operator('mcenv.edit_field',text='Time',icon='TIME'); op.property_name='time'
+        if prefs.quick_fav_rotation:
+            op=col.operator('mcenv.edit_field',text='Rotation',icon='DRIVER_ROTATIONAL_DIFFERENCE'); op.property_name='rotation'
+    if show_dials:
+        op=col.operator('mcenv.dial',text='Time (circular dial)',icon='TIME'); op.property_name='time'
+        op=col.operator('mcenv.dial',text='Rotation (circular dial)',icon='DRIVER_ROTATIONAL_DIFFERENCE'); op.property_name='rotation'
 
 
-CLASSES=(MCENV_OT_edit,MCENV_OT_dial)
+CLASSES=(MCENV_OT_edit,MCENV_OT_dial,MCENV_OT_quick_favorite,MCENV_Preferences)
+
+
+def _context_menu():
+    # UI_MT_button_context_menu is the right-click menu for UI buttons (3.x+).
+    return getattr(bpy.types,'UI_MT_button_context_menu',None) or getattr(bpy.types,'WM_MT_button_context',None)
 
 
 def register():
     for cls in CLASSES: bpy.utils.register_class(cls)
     try: bpy.types.SCREEN_MT_user_menu.append(_quick_favorites_draw)
     except Exception: pass
+    menu=_context_menu()
+    if menu:
+        try: menu.append(_button_context_draw)
+        except Exception: pass
 
 
 def unregister():
+    menu=_context_menu()
+    if menu:
+        try: menu.remove(_button_context_draw)
+        except Exception: pass
     try: bpy.types.SCREEN_MT_user_menu.remove(_quick_favorites_draw)
     except Exception: pass
     for cls in reversed(CLASSES): bpy.utils.unregister_class(cls)
