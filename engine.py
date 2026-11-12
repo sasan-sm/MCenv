@@ -223,17 +223,19 @@ def celestial(scene, role, direction, scale, tint, image, tilt):
 def stars_setup(scene, night):
     """Real square-star dome over the whole sky; fades in at dusk, out at dawn."""
     p=scene.mc_env; o=object_for(scene,'Stars')
-    sig=str((round(p.stars_size,3),p.stars_count,round(p.stars_size_random,3)))
+    sig=str((round(p.stars_size,3),p.stars_count,round(p.stars_random_size,2)))
     if o.get('sig') != sig:
         rng=random.Random(20); verts=[]; faces=[]
         # Uniform directions over the full sky above the horizon (both hemispheres).
-        for i in range(p.stars_count):
+        for i in range(max(0,p.stars_count)):
             z=rng.uniform(.03,1); a=rng.uniform(0,math.tau)
             r=math.sqrt(max(0,1-z*z))
             d=Vector((math.cos(a)*r,math.sin(a)*r,z))
-            # Exactly one size draw per star keeps positions stable while the
-            # random-size slider changes; 0 variation = every star identical.
-            s=max(.1,1+p.stars_size_random*(rng.random()*2-1)*.8)*p.stars_size*140
+            # Same draw order as 1.2.0 keeps default star positions stable across versions.
+            roll=rng.random()
+            # Randomness 0 keeps every star at the same size; higher values spread sizes.
+            vary=1+rng.uniform(-p.stars_random_size,p.stars_random_size) if p.stars_random_size>0 else 1
+            s=max(.1,vary)*p.stars_size*140
             t1=d.cross(Vector((0,0,1)))
             if t1.length<1e-4: t1=Vector((1,0,0))
             t1.normalize(); t2=t1.cross(d).normalized()
