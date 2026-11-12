@@ -60,6 +60,7 @@ class MCENV_PT_world(_McenvWorldPanel,bpy.types.Panel):
         if not p.enabled:
             layout.label(text='Minecraft-inspired environment')
             layout.operator('mcenv.create',icon='WORLD')
+            layout.operator('mcenv.uninstall',icon='X',text='Uninstall mc-env')
             return
         # Native draggable sliders with the keyframe (Animate Property) column.
         layout.use_property_split=True; layout.use_property_decorate=True
@@ -70,6 +71,8 @@ class MCENV_PT_world(_McenvWorldPanel,bpy.types.Panel):
             split=layout.column(); split.use_property_split=False
             box=split.box(); box.alert=True; box.label(text=err,icon='ERROR')
         layout.prop(p,'texture_fps')
+        split=layout.column(); split.use_property_split=False
+        split.operator('mcenv.uninstall',icon='X',text='Uninstall mc-env')
 
 
 class MCENV_PT_world_sun(_McenvWorldPanel,bpy.types.Panel):
@@ -218,29 +221,11 @@ class MCENV_PT_world_tools(_McenvWorldPanel,bpy.types.Panel):
         layout.label(text='Image files are saved with .blend, not presets.',icon='INFO')
         row=layout.row(align=True)
         row.operator('mcenv.reset',icon='LOOP_BACK'); row.operator('mcenv.remove',icon='TRASH')
-
-
-class MCENV_PT_world_uninstall(_McenvWorldPanel,bpy.types.Panel):
-    bl_parent_id='MCENV_PT_world'
-    bl_label='Uninstall mc-env'
-    bl_idname='MCENV_PT_world_uninstall'
-    bl_order=9
-    bl_options={'DEFAULT_CLOSED'}
-
-    def draw_header(self,context): self.layout.label(text='',icon='TRASH')
-
-    def draw(self,context):
-        layout=self.layout
-        col=layout.column(align=True)
-        col.label(text='Removes the environment from every scene,')
-        col.label(text='restores previous worlds, then deletes')
-        col.label(text='the add-on files from Blender.')
-        layout.operator('mcenv.uninstall',icon='TRASH')
+        layout.operator('mcenv.uninstall',icon='X',text='Uninstall mc-env',)
 
 
 PANELS=(MCENV_PT_world,MCENV_PT_world_sun,MCENV_PT_world_sky,MCENV_PT_world_cloud,MCENV_PT_world_ground,
-        MCENV_PT_world_biome,MCENV_PT_world_colors,MCENV_PT_world_fog,MCENV_PT_world_wind,MCENV_PT_world_tools,
-        MCENV_PT_world_uninstall)
+        MCENV_PT_world_biome,MCENV_PT_world_colors,MCENV_PT_world_fog,MCENV_PT_world_wind,MCENV_PT_world_tools)
 
 
 def register():
