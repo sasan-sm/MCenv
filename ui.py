@@ -10,7 +10,7 @@ def section_fields(p, section):
     if section=='sky':
         if p.sky_mode=='CUSTOM':
             return ['sky_mode','background_image','background_type','background_stretch' if p.background_type=='IMAGE' else 'background_rotation']
-        return ['sky_mode','sun_image','sun_tilt','sun_scale','moon_image','moon_phase','moon_tilt','moon_scale','stars_size','stars_random_size','stars_count','stars_strength']
+        return ['sky_mode','sun_image','sun_tilt','sun_scale','moon_image','moon_phase','moon_tilt','moon_scale','stars_size','stars_strength']
     if section=='cloud': return ['cloud_mode','cloud_image','cloud_speed','cloud_offset','cloud_height','cloud_size','cloud_thickness','cloud_coverage','cloud_seed']
     if section=='ground': return ['ground_type','ground_image','ground_normal','ground_material','ground_size','ground_height','ground_tile']
     if section=='fog':

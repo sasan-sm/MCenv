@@ -67,8 +67,6 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     moon_tilt: FloatProperty(name='Moon angle', default=0, update=update)
     moon_scale: FloatProperty(name='Moon scale', default=1, min=0, soft_max=5, update=update)
     stars_size: FloatProperty(name='Star size', default=.045, min=.005, max=.15, update=update)
-    stars_random_size: FloatProperty(name='Star size randomness', description='0 keeps every star the same size; higher values give stars randomly different sizes', default=0, min=0, soft_max=2, update=update)
-    stars_count: IntProperty(name='Star count', description='Number of stars in the sky', default=420, min=0, soft_max=2000, update=update)
     stars_strength: FloatProperty(name='Star brightness', default=1, min=0, soft_max=10, update=update)
     clouds: BoolProperty(name='Clouds', default=True, update=update)
     cloud_mode: EnumProperty(name='Mode', items=[('NORMAL','Normal','Solid block clouds'),('FADED','Faded','Semi-transparent block clouds'),('FLAT','Flat','Flat square cloud tiles')], update=update)
