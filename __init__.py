@@ -6,20 +6,20 @@ bl_info = {
     "category": "Lighting",
 }
 
-from . import properties, engine, operators, ui, dial
+from . import properties, engine, operators, ui, overlay
 
 
 def register():
     properties.register()
     operators.register()
     ui.register()
-    dial.register()
+    overlay.register()
     engine.register()
 
 
 def unregister():
     engine.unregister()
-    dial.unregister()
+    overlay.unregister()
     ui.unregister()
     operators.unregister()
     properties.unregister()
