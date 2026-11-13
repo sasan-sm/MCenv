@@ -58,6 +58,59 @@ class MCENV_OT_remove(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def animatable_key(p, key):
+    prop = p.bl_rna.properties.get(key)
+    return bool(prop and prop.is_animatable and prop.type in {'FLOAT', 'INT', 'BOOLEAN', 'ENUM'}
+                and key not in {'enabled', 'previous_world_empty', 'tint_kind'} and not key.startswith('fold_'))
+
+
+def property_curves(scene, key):
+    anim = scene.animation_data
+    if not anim or not anim.action:
+        return []
+    action = anim.action
+    if hasattr(action, 'fcurves'):
+        curves = action.fcurves
+    else:
+        from bpy_extras.anim_utils import action_get_channelbag_for_slot
+        bag = action_get_channelbag_for_slot(action, anim.action_slot)
+        curves = bag.fcurves if bag else []
+    path = scene.mc_env.path_from_id(key)
+    return [curve for curve in curves if curve.data_path == path]
+
+
+def animation_icon(scene, key):
+    curves = property_curves(scene, key)
+    if any(abs(point.co.x - scene.frame_current) < 0.001 for curve in curves for point in curve.keyframe_points):
+        return 'KEYFRAME_HLT'
+    return 'DECORATE_ANIMATE' if curves else 'DECORATE'
+
+
+class MCENV_OT_animate(bpy.types.Operator):
+    bl_idname = 'mcenv.animate_property'
+    bl_label = 'Animate Property'
+    bl_description = 'Insert or replace a keyframe for this MCenv setting at the current frame (all color channels)'
+    bl_options = {'REGISTER', 'UNDO'}
+    property_name: StringProperty()
+
+    def execute(self, context):
+        p = context.scene.mc_env
+        if not animatable_key(p, self.property_name):
+            self.report({'WARNING'}, 'This setting cannot be keyframed')
+            return {'CANCELLED'}
+        try:
+            ok = p.keyframe_insert(data_path=self.property_name, frame=context.scene.frame_current,
+                                   group='MCenv Environment')
+        except (TypeError, RuntimeError) as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        if not ok:
+            return {'CANCELLED'}
+        for area in context.screen.areas if context.screen else []:
+            area.tag_redraw()
+        return {'FINISHED'}
+
+
 class MCENV_OT_image(bpy.types.Operator,ImportHelper):
     bl_idname='mcenv.load_image'
     bl_label='Load Environment Image'
@@ -314,7 +367,7 @@ class MCENV_OT_reset(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_uninstall,MCENV_OT_image,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_tint,MCENV_OT_untint,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
+CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_animate,MCENV_OT_uninstall,MCENV_OT_image,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_tint,MCENV_OT_untint,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
 
 
 def register():
