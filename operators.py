@@ -10,7 +10,7 @@ from . import engine
 class MCENV_OT_create(bpy.types.Operator):
     bl_idname='mcenv.create'
     bl_label='Create Environment'
-    bl_description='Create a separate mc-env collection; preserve the current world for removal'
+    bl_description='Create a separate MCenv collection; preserve the current world for removal'
     bl_options={'REGISTER','UNDO'}
 
     def execute(self,context):
@@ -38,7 +38,7 @@ class MCENV_OT_remove(bpy.types.Operator):
     def execute(self,context):
         scene=context.scene; p=scene.mc_env; p.enabled=False
         world=scene.world
-        if world and world.name.startswith('mc-env '+p.owner_id):
+        if world and world.name.startswith((engine.BRAND+' '+p.owner_id, engine.LEGACY_BRAND+' '+p.owner_id)):
             scene.world=None if p.previous_world_empty else p.previous_world
         for col in list(scene.collection.children):
             if col.get('mcenv_owner')==p.owner_id:
@@ -51,8 +51,8 @@ class MCENV_OT_remove(bpy.types.Operator):
                 bpy.data.collections.remove(col)
         # Remove unused rig data only; never purge a user's data or bound material.
         for data in list(bpy.data.materials):
-            if data.name.startswith('mc-env '+p.owner_id+' ') and data.users==0: bpy.data.materials.remove(data)
-        if world and world.name.startswith('mc-env '+p.owner_id) and world.users==0: bpy.data.worlds.remove(world)
+            if data.name.startswith((engine.BRAND+' '+p.owner_id+' ', engine.LEGACY_BRAND+' '+p.owner_id+' ')) and data.users==0: bpy.data.materials.remove(data)
+        if world and world.name.startswith((engine.BRAND+' '+p.owner_id, engine.LEGACY_BRAND+' '+p.owner_id)) and world.users==0: bpy.data.worlds.remove(world)
         return {'FINISHED'}
 
 
@@ -171,14 +171,14 @@ class MCENV_OT_tint(bpy.types.Operator):
                 old=slot.material
                 if not old or not old.use_nodes: continue
                 # Copy first, so unselected objects sharing the original stay untouched.
-                m=old.copy(); m.name=old.name+' • mc-env '+kind; slot.link='OBJECT'; slot.material=m
+                m=old.copy(); m.name=old.name+' • MCenv '+kind; slot.link='OBJECT'; slot.material=m
                 t=m.node_tree
                 for bs in [n for n in t.nodes if n.type=='BSDF_PRINCIPLED']:
                     socket=bs.inputs['Base Color']
                     if socket.links and socket.links[0].from_node.get('mcenv_tint'):
                         tint=socket.links[0].from_node
                     else:
-                        tint=engine.node(t,'ShaderNodeMixRGB','mc-env Biome tint',blend_type='MULTIPLY')
+                        tint=engine.node(t,'ShaderNodeMixRGB','MCenv Biome tint',blend_type='MULTIPLY')
                         tint.inputs[0].default_value=1
                         if socket.links:
                             source=socket.links[0].from_socket; t.links.new(source,tint.inputs[1])
@@ -230,11 +230,11 @@ class MCENV_OT_atlas(bpy.types.Operator):
                 names=[n.name for n in candidates]; m=old.copy(); slot.link='OBJECT'; slot.material=m; t=m.node_tree
                 for name in names:
                     tex=t.nodes[name]; rows=tex.image.size[1]//tex.image.size[0]
-                    mul=engine.node(t,'ShaderNodeVectorMath','mc-env Atlas scale',operation='MULTIPLY'); mul.inputs[1].default_value=(1,1/rows,1)
+                    mul=engine.node(t,'ShaderNodeVectorMath','MCenv Atlas scale',operation='MULTIPLY'); mul.inputs[1].default_value=(1,1/rows,1)
                     if tex.inputs[0].links: t.links.new(tex.inputs[0].links[0].from_socket,mul.inputs[0])
                     else:
-                        uv=engine.node(t,'ShaderNodeTexCoord','mc-env UV'); t.links.new(uv.outputs['UV'],mul.inputs[0])
-                    add=engine.node(t,'ShaderNodeVectorMath','mc-env Atlas frame',operation='ADD'); add['mcenv_atlas']=rows
+                        uv=engine.node(t,'ShaderNodeTexCoord','MCenv UV'); t.links.new(uv.outputs['UV'],mul.inputs[0])
+                    add=engine.node(t,'ShaderNodeVectorMath','MCenv Atlas frame',operation='ADD'); add['mcenv_atlas']=rows
                     t.links.new(mul.outputs[0],add.inputs[0]); t.links.new(add.outputs[0],tex.inputs[0]); tex.interpolation='Closest'; count+=1
         engine.sync(context.scene)
         if count==0:
@@ -253,7 +253,7 @@ def preset_data(p):
         if key in SKIP or key.startswith('fold_') or prop.type=='POINTER': continue
         value=getattr(p,key)
         data[key]=list(value) if getattr(prop,'is_array',False) else value
-    return {'format':'mc-env','version':1,'settings':data}
+    return {'format':'MCenv','version':1,'settings':data}
 
 
 class MCENV_OT_export(bpy.types.Operator,ExportHelper):
@@ -281,7 +281,7 @@ class MCENV_OT_import(bpy.types.Operator,ImportHelper):
         p=context.scene.mc_env
         try:
             with open(self.filepath,encoding='utf8') as f: data=json.load(f)
-            if data.get('format')!='mc-env' or data.get('version')!=1 or not isinstance(data.get('settings'),dict): raise ValueError('Not a mc-env v1 preset')
+            if data.get('format') not in {'MCenv',engine.LEGACY_BRAND} or data.get('version')!=1 or not isinstance(data.get('settings'),dict): raise ValueError('Not a MCenv v1 preset')
             valid=preset_data(p)['settings']; settings=data['settings']
             # Validate the entire document before making any scene changes.
             for k,v in settings.items():

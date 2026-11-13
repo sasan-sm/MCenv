@@ -10,6 +10,24 @@ from .properties import BIOMES, rgb
 
 _BUSY = set()
 _ERRORS = {}
+BRAND = 'MCenv'
+# Preserve data from version 1.0 without keeping the old display name.
+LEGACY_BRAND = 'mc' + '-env'
+
+
+def migrate_named_data(scene):
+    token = scene.mc_env.owner_id
+    for datablocks in (bpy.data.worlds, bpy.data.materials, bpy.data.images):
+        for block in datablocks:
+            if block.name.startswith(LEGACY_BRAND+' '+token+' '):
+                block.name = BRAND+block.name[len(LEGACY_BRAND):]
+    for col in scene.collection.children:
+        if col.get('mcenv_owner') == token and col.name.startswith(LEGACY_BRAND):
+            col.name = BRAND+col.name[len(LEGACY_BRAND):]
+    for obj in scene.objects:
+        if obj.get('mcenv_owner') == token:
+            if obj.name.startswith(LEGACY_BRAND): obj.name = BRAND+obj.name[len(LEGACY_BRAND):]
+            if obj.data and obj.data.name.startswith(LEGACY_BRAND): obj.data.name = BRAND+obj.data.name[len(LEGACY_BRAND):]
 
 
 def mix(a, b, t):
@@ -42,7 +60,7 @@ def collection(scene):
     token = owner(scene)
     col = next((c for c in scene.collection.children if c.get('mcenv_owner') == token), None)
     if col is None:
-        col = bpy.data.collections.new('mc-env • Environment')
+        col = bpy.data.collections.new('MCenv • Environment')
         col['mcenv_owner'] = token
         col['mcenv_scene'] = scene
         scene.collection.children.link(col)
@@ -53,8 +71,8 @@ def object_for(scene, role, kind='MESH'):
     obj = owned(scene, role)
     if obj:
         return obj
-    data = bpy.data.lights.new('mc-env '+role, 'SUN') if kind == 'SUN' else bpy.data.meshes.new('mc-env '+role)
-    obj = bpy.data.objects.new('mc-env • '+role, data)
+    data = bpy.data.lights.new('MCenv '+role, 'SUN') if kind == 'SUN' else bpy.data.meshes.new('MCenv '+role)
+    obj = bpy.data.objects.new('MCenv • '+role, data)
     obj['mcenv_owner'] = owner(scene)
     obj['mcenv_role'] = role
     collection(scene).objects.link(obj)
@@ -63,7 +81,7 @@ def object_for(scene, role, kind='MESH'):
 
 
 def material(scene, role):
-    name = 'mc-env '+scene.mc_env.owner_id+' '+role
+    name = 'MCenv '+scene.mc_env.owner_id+' '+role
     m = bpy.data.materials.get(name)
     if not m:
         m = bpy.data.materials.new(name)
@@ -104,7 +122,7 @@ def biome_color(p, kind):
 
 def world_setup(scene):
     p=scene.mc_env
-    name='mc-env '+p.owner_id+' World'
+    name='MCenv '+p.owner_id+' World'
     w=bpy.data.worlds.get(name)
     if w is None:
         w=bpy.data.worlds.new(name)
@@ -191,7 +209,7 @@ def emission_mat(scene, role):
 
 def moon_image(scene):
     p=scene.mc_env
-    name='mc-env '+p.owner_id+' Moon phase'
+    name='MCenv '+p.owner_id+' Moon phase'
     im=bpy.data.images.get(name)
     if im is None: im=bpy.data.images.new(name,32,32,alpha=True)
     if im.get('phase') != p.moon_phase:
@@ -342,6 +360,7 @@ def sync(scene):
     _BUSY.add(ptr)
     try:
         p=scene.mc_env; owner(scene)
+        migrate_named_data(scene)
         sec=(scene.frame_current-scene.frame_start)/(scene.render.fps/scene.render.fps_base)
         hour=(p.time+((scene.frame_current-scene.frame_start)*24/p.cycle_frames if p.preview_day_cycle else 0))%24
         elevation=math.sin((hour-6)*math.tau/24)
@@ -381,7 +400,7 @@ def sync(scene):
         _ERRORS.pop(ptr,None)
     except Exception as exc:
         _ERRORS[ptr]=str(exc)
-        print('mc-env update error:',repr(exc))
+        print('MCenv update error:',repr(exc))
     finally: _BUSY.discard(ptr)
 
 
@@ -413,7 +432,7 @@ def build_wind(obj):
     zs=[v.co.z for v in obj.data.vertices]
     lo=min(zs,default=0); span=max(zs,default=1)-lo
     for v in obj.data.vertices: group.add([v.index],max(0,min(1,(v.co.z-lo)/max(.001,span))), 'REPLACE')
-    t=bpy.data.node_groups.new('mc-env Wind • '+obj.name,'GeometryNodeTree')
+    t=bpy.data.node_groups.new('MCenv Wind • '+obj.name,'GeometryNodeTree')
     t.interface.new_socket(name='Geometry',in_out='INPUT',socket_type='NodeSocketGeometry')
     t.interface.new_socket(name='Geometry',in_out='OUTPUT',socket_type='NodeSocketGeometry')
     inp=node(t,'NodeGroupInput','Input'); out=node(t,'NodeGroupOutput','Output')
@@ -434,7 +453,7 @@ def build_wind(obj):
     for n,trig in [(x,cos),(y,sin)]: link(t,trig,0,n,0); link(t,weighted,0,n,1)
     vec=node(t,'ShaderNodeCombineXYZ','Offset'); link(t,x,0,vec,'X'); link(t,y,0,vec,'Y')
     setpos=node(t,'GeometryNodeSetPosition','Sway'); link(t,inp,'Geometry',setpos,'Geometry'); link(t,vec,0,setpos,'Offset'); link(t,setpos,'Geometry',out,'Geometry')
-    mod=obj.modifiers.new('mc-env Wind','NODES'); mod.node_group=t; mod['mcenv_wind']=True
+    mod=obj.modifiers.new('MCenv Wind','NODES'); mod.node_group=t; mod['mcenv_wind']=True
 
 
 @persistent
