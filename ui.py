@@ -78,14 +78,15 @@ class MCENV_PT_environment(bpy.types.Panel):
         err=engine._ERRORS.get(context.scene.as_pointer())
         if err:
             box=layout.box(); box.alert=True; box.label(text=err,icon='ERROR')
-        minutes=round(p.time*60)%1440
-        for key, label, value, operator in [('time','Time',f'{minutes//60}:{minutes%60:02d}','mcenv.time_dial'),
-                                             ('rotation','Rotation',f'{p.rotation:g}°','mcenv.rotation_dial')]:
+        # Icon opens the circular dial (right-click it for Add to Quick Favorites;
+        # a static label keeps stored favorites from showing stale values) and the
+        # native field beside it is drag-editable, wrapping around the day.
+        for key, operator, icon in [('time','mcenv.time_dial','TIME'),
+                                     ('rotation','mcenv.rotation_dial','DRIVER_ROTATIONAL_DIFFERENCE')]:
             row=layout.row(align=True)
             row.operator_context='INVOKE_DEFAULT'
-            row.operator(operator,text=f'{label}: {value}',icon='TIME' if key=='time' else 'DRIVER_ROTATIONAL_DIFFERENCE')
-            op=row.operator('mcenv.animate_property',text='',icon=animation_icon(context.scene,key))
-            op.property_name=key
+            row.operator(operator,text=key.title(),icon=icon)
+            row.prop(p,key,text='')
         for key,title,toggle in SECTIONS: section(layout,p,key,title,toggle)
         layout.label(text='Biome'); layout.prop(p,'biome',text='')
         if p.biome=='CUSTOM': color_grid(layout,p,BIOME_FIELDS)

@@ -38,6 +38,23 @@ def update(self, context):
         sync(scene)
 
 
+def update_time(self, context):
+    # The day loops while dragging: past 24 keeps counting from 0 and below 0
+    # wraps back to the evening hours, instead of sticking at the limits.
+    t = self.time % 24
+    if t != self.time:
+        self.time = t
+    update(self, context)
+
+
+def update_rotation(self, context):
+    # Full turns wrap into the -180..180 heading range, matching the dial.
+    r = (self.rotation + 180) % 360 - 180
+    if r != self.rotation:
+        self.rotation = r
+    update(self, context)
+
+
 def color(name, value):
     return FloatVectorProperty(name=name, subtype='COLOR', size=3,
                                min=0, max=1, default=rgb(value), update=update)
@@ -48,8 +65,8 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     owner_id: StringProperty(options={'HIDDEN'})
     previous_world: PointerProperty(type=bpy.types.World)
     previous_world_empty: BoolProperty(default=False)
-    time: FloatProperty(name='Time', description='Hours, 0 = midnight, 6 = sunrise, 12 = noon', default=9, min=0, max=24, update=update)
-    rotation: FloatProperty(name='Rotation', description='World heading in degrees', default=0, soft_min=-180, soft_max=180, update=update)
+    time: FloatProperty(name='Time', description='Hours, 0 = midnight, 6 = sunrise, 12 = noon; drag past either end to wrap around the day', default=9, update=update_time)
+    rotation: FloatProperty(name='Rotation', description='World heading in degrees; drag across the ends to wrap around', default=0, update=update_rotation)
     sun_angle: FloatProperty(name='Sunlight angle', description='Angular size in degrees; controls soft shadows', default=.526, min=0, max=180, update=update)
     sun_strength: FloatProperty(name='Strength', default=3, min=0, soft_max=10, update=update)
     ambient_strength: FloatProperty(name='Ambient strength', default=.5, min=0, soft_max=3, update=update)
