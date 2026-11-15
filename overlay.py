@@ -267,8 +267,30 @@ def _quick_favorites_draw(menu,context):
     if p is None or not p.enabled: return
     col=menu.layout.column(align=True)
     col.label(text='MCenv',icon='WORLD')
-    op=col.operator('mcenv.dial',text='Time (circular dial)',icon='TIME'); op.property_name='time'
-    op=col.operator('mcenv.dial',text='Rotation (circular dial)',icon='DRIVER_ROTATIONAL_DIFFERENCE'); op.property_name='rotation'
+    # Labels are rebuilt on every menu draw, so the values shown here are always current.
+    minutes=round(p.time*60)%1440
+    op=col.operator('mcenv.dial',text=f'Time: {minutes//60}:{minutes%60:02d} (circular dial)',icon='TIME'); op.property_name='time'
+    op=col.operator('mcenv.dial',text=f'Rotation: {p.rotation:g}° (circular dial)',icon='DRIVER_ROTATIONAL_DIFFERENCE'); op.property_name='rotation'
+
+
+def _refresh_quick_favorites_labels():
+    """Quick Favorites freezes a button's text when the entry is added, so
+    favorites of the old value-carrying buttons keep showing Time: 9:00 style
+    labels forever. Best-effort rewrite of those labels to the static dial
+    names; harmless if the user-menu RNA is unavailable in this Blender build."""
+    fixed={'mcenv.time_dial':'Time','mcenv.rotation_dial':'Rotation'}
+    def rewrite(menus):
+        for menu in menus:
+            for item in getattr(menu,'items',[]):
+                op=getattr(item,'operator','')
+                label=getattr(item,'label','')
+                if op in fixed and (':' in label or '°' in label):
+                    item.label=fixed[op]
+    for source in (getattr(getattr(bpy.context,'preferences',None),'user_menus',None),
+                   getattr(getattr(bpy.context,'window_manager',None),'user_menus',None)):
+        if source is None: continue
+        try: rewrite(source)
+        except Exception: pass
 
 
 CLASSES=(MCENV_OT_edit,MCENV_OT_dial,MCENV_OT_time_dial,MCENV_OT_rotation_dial)
@@ -278,6 +300,7 @@ def register():
     for cls in CLASSES: bpy.utils.register_class(cls)
     try: bpy.types.SCREEN_MT_user_menu.append(_quick_favorites_draw)
     except Exception: pass
+    _refresh_quick_favorites_labels()
 
 
 def unregister():
