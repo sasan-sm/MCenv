@@ -273,6 +273,7 @@ def stars_setup(scene, night):
     em=t.nodes['Emission']
     em.inputs[0].default_value=rgba(p.night_stars); em.inputs[1].default_value=p.stars_strength
     t.nodes['Alpha'].inputs[0].default_value=night
+    m.use_backface_culling=False
     if hasattr(m,'surface_render_method'): m.surface_render_method='DITHERED'
 
 
@@ -321,6 +322,28 @@ def ground_setup(scene):
         elif name=='Albedo': link(t,t.nodes['Tint'],0,bs,socket)
 
 
+def cloud_material(scene, faded):
+    # Solid clouds get a pure emission shader. Keeping a Transparent BSDF in
+    # the tree would route the whole cloud sheet through EEVEE's transparent
+    # pipeline even at full opacity, which can hide geometry behind the empty
+    # parts of the field (stars). Faded clouds keep the transparency mix.
+    m=material(scene,'Clouds'); t=m.node_tree
+    want='FADED' if faded else 'SOLID'
+    if t.nodes.get('Emission') is None or m.get('mcenv_cloud_tree') != want:
+        t.nodes.clear()
+        out=node(t,'ShaderNodeOutputMaterial','Output')
+        em=node(t,'ShaderNodeEmission','Emission')
+        if faded:
+            trans=node(t,'ShaderNodeBsdfTransparent','Transparent')
+            choose=node(t,'ShaderNodeMixShader','Alpha')
+            choose.inputs[0].default_value=.5
+            link(t,trans,0,choose,1); link(t,em,0,choose,2); link(t,choose,0,out,0)
+        else:
+            link(t,em,0,out,0)
+        m['mcenv_cloud_tree']=want
+    return m
+
+
 def clouds_setup(scene, seconds, c):
     p=scene.mc_env; o=object_for(scene,'Clouds')
     sig=str(('v2',p.cloud_mode,p.cloud_size,p.cloud_blocks,p.cloud_thickness,p.cloud_coverage,p.cloud_seed,p.cloud_image.name if p.cloud_image else '',p.cloud_image.size[:] if p.cloud_image else ''))
@@ -348,10 +371,10 @@ def clouds_setup(scene, seconds, c):
         o['signature']=sig
     o.location=(p.cloud_offset+seconds*p.cloud_speed,0,p.cloud_height)
     o.hide_render=not p.clouds; o.hide_viewport=not p.clouds
-    m=emission_mat(scene,'Clouds'); put_mat(o,m)
+    m=cloud_material(scene,p.cloud_mode=='FADED'); put_mat(o,m)
     m.node_tree.nodes['Emission'].inputs[0].default_value=rgba(c)
-    m.node_tree.nodes['Alpha'].inputs[0].default_value=.5 if p.cloud_mode=='FADED' else 1
     if hasattr(m,'surface_render_method'): m.surface_render_method='DITHERED'
+    m.use_backface_culling=False
 
 
 def fog_setup(scene, sky):
