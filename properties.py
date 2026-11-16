@@ -150,6 +150,7 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     fold_sky: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_cloud: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_ground: BoolProperty(default=False, options={'SKIP_SAVE'})
+    fold_scene: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_fog: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_wind: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_tools: BoolProperty(default=False, options={'SKIP_SAVE'})

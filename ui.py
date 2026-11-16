@@ -37,18 +37,25 @@ def section(layout,p,key,title,toggle=None):
     row.use_property_split=False
     row.prop(p,'fold_'+key,text=title,icon='TRIA_DOWN' if getattr(p,'fold_'+key) else 'TRIA_RIGHT',emboss=False)
     if toggle:
-        row.prop(p,toggle,text='')
-        op=row.operator('mcenv.animate_property',text='',icon=animation_icon(p.id_data,toggle))
+        # A bare keyframe dot like the other parameters: no embossed square
+        # button around it, nothing that invites Add to Quick Favorites.
+        op=row.operator('mcenv.animate_property',text='',icon=animation_icon(p.id_data,toggle),emboss=False)
         op.property_name=toggle
     if getattr(p,'fold_'+key):
         col=layout.column(align=True)
-        if toggle: col.enabled=getattr(p,toggle)
+        if toggle: col.prop(p,toggle)   # on/off sits inside, like every other parameter
+        body=layout.column(align=True)
+        if toggle: body.enabled=getattr(p,toggle)
         if key=='ground':
-            for name in ('ground_image','ground_side'): field(col,p,name)
-            biome_col=layout.column(align=True)
+            # Top texture takes the biome tint across its whole image; the
+            # Side texture is tinted only on the bundled grass overlay strip.
+            for name in ('ground_image','ground_side'): field(body,p,name)
+            biome_col=layout.column(align=True)   # stays usable even with ground off
             field(biome_col,p,'biome')
             if p.biome=='CUSTOM': color_grid(biome_col,p,BIOME_FIELDS)
-        for name in section_fields(p,key): field(col,p,name)
+            for name in section_fields(p,key): field(body,p,name)
+        else:
+            for name in section_fields(p,key): field(body,p,name)
 
 
 def color_grid(layout,p,keys):
@@ -93,10 +100,15 @@ class MCENV_PT_environment(bpy.types.Panel):
             row.operator(operator,text=key.title(),icon=icon)
             row.prop(p,key,text='')
         for key,title,toggle in SECTIONS: section(layout,p,key,title,toggle)
-        layout.separator(); layout.label(text='Day scene colors:')
-        color_grid(layout,p,['day_sky','day_clouds','day_sunlight','day_ambient'])
-        layout.separator(); layout.label(text='Night scene colors:')
-        color_grid(layout,p,['night_sky','night_clouds','night_stars','night_ambient'])
+        layout.separator()
+        row=layout.row(align=True)
+        row.use_property_split=False
+        row.prop(p,'fold_scene',text='Scene Colors',icon='TRIA_DOWN' if p.fold_scene else 'TRIA_RIGHT',emboss=False)
+        if p.fold_scene:
+            layout.label(text='Day')
+            color_grid(layout,p,['day_sky','day_clouds','day_sunlight','day_ambient'])
+            layout.label(text='Night')
+            color_grid(layout,p,['night_sky','night_clouds','night_stars','night_ambient'])
         layout.prop(p,'twilight')
         section(layout,p,'fog','Fog','fog'); section(layout,p,'wind','Wind','wind')
         layout.prop(p,'texture_fps',text='Texture animation speed')
