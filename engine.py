@@ -323,13 +323,17 @@ def ground_setup(scene):
 
 def clouds_setup(scene, seconds, c):
     p=scene.mc_env; o=object_for(scene,'Clouds')
-    sig=str((p.cloud_mode,p.cloud_size,p.cloud_thickness,p.cloud_coverage,p.cloud_seed,p.cloud_image.name if p.cloud_image else '',p.cloud_image.size[:] if p.cloud_image else ''))
+    sig=str(('v2',p.cloud_mode,p.cloud_size,p.cloud_blocks,p.cloud_thickness,p.cloud_coverage,p.cloud_seed,p.cloud_image.name if p.cloud_image else '',p.cloud_image.size[:] if p.cloud_image else ''))
     if o.get('signature') != sig:
-        rng=random.Random(p.cloud_seed); centers=[]; n=32; cell=p.cloud_size/n
+        rng=random.Random(p.cloud_seed); centers=[]
+        # Size adds one random block column on every side per step; Scale
+        # keeps fixing the block size, so the field physically grows.
+        n=32+2*p.cloud_blocks; cell=p.cloud_size/32
         pixels=p.cloud_image.pixels if p.cloud_image and p.cloud_image.has_data else None
         iw,ih=p.cloud_image.size[:] if pixels else (0,0)
         # Sample a small low-frequency field for connected pixel clouds.
-        field=[[rng.random() for _ in range(10)] for _ in range(10)]
+        side=max(10,int((n-1)/4)+2)
+        field=[[rng.random() for _ in range(side)] for _ in range(side)]
         for y in range(n):
             for x in range(n):
                 if pixels:
