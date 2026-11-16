@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Scene-owned data only. No network, external assets, eval or third-party packages."""
 import math
+import os
 import uuid
 import random
 import bpy
@@ -277,6 +278,19 @@ def stars_setup(scene, night):
     if hasattr(m,'surface_render_method'): m.surface_render_method='DITHERED'
 
 
+def side_overlay_image():
+    """Bundled grayscale grass fringe mask; its alpha marks the tinted strip."""
+    name='MCenv Grass Side Overlay'
+    im=bpy.data.images.get(name)
+    if im is None:
+        try:
+            im=bpy.data.images.load(os.path.join(os.path.dirname(__file__),'grass_block_side_overlay.png'),check_existing=True)
+            im.name=name
+            im.colorspace_settings.name='Non-Color'
+        except Exception: return None
+    return im
+
+
 def ground_setup(scene):
     p=scene.mc_env; o=object_for(scene,'Ground')
     if not o.data.vertices:
@@ -287,8 +301,11 @@ def ground_setup(scene):
     o.location=(0,0,p.ground_height); o.scale=(p.ground_size,p.ground_size,1)
     o.hide_render=not p.ground; o.hide_viewport=not p.ground
     m=material(scene,'Ground'); put_mat(o,m); t=m.node_tree
-    if not t.nodes.get('Surface'):
-        t.nodes.clear()
+    if not t.nodes.get('Surface') or m.get('mcenv_ground_tree')!='v2':
+        # v2: up-facing geometry samples the Top texture with the biome tint
+        # over its whole image; side-facing geometry samples the Side texture,
+        # tinted only where the bundled grass overlay strip covers it.
+        t.nodes.clear(); m['mcenv_ground_tree']='v2'
         out=node(t,'ShaderNodeOutputMaterial','Output')
         bs=node(t,'ShaderNodeBsdfPrincipled','Surface'); link(t,bs,0,out,0)
         bs.inputs['Roughness'].default_value=.85
@@ -300,26 +317,52 @@ def ground_setup(scene):
         snap=node(t,'ShaderNodeVectorMath','Pixel grid',operation='SNAP'); snap.inputs[1].default_value=(1/16,1/16,1/16)
         link(t,scale,0,snap,0); link(t,snap,0,noise,0)
         tint=node(t,'ShaderNodeMixRGB','Tint',blend_type='MULTIPLY'); tint.inputs[0].default_value=.3
-        link(t,noise,'Fac',tint,2); link(t,tint,0,bs,'Base Color')
-        for name in ('Albedo','Normal','Roughness'):
-            im=node(t,'ShaderNodeTexImage',name,interpolation='Closest',extension='REPEAT'); link(t,scale,0,im,0)
-        normal=node(t,'ShaderNodeNormalMap','Normal map'); link(t,t.nodes['Normal'],'Color',normal,'Color')
+        link(t,noise,'Fac',tint,2)
+        node(t,'ShaderNodeTexImage','Albedo',interpolation='Closest',extension='REPEAT'); link(t,scale,0,t.nodes['Albedo'],0)
         albedo_tint=node(t,'ShaderNodeMixRGB','Image biome tint',blend_type='MULTIPLY')
         albedo_tint.inputs[0].default_value=1
         link(t,t.nodes['Albedo'],'Color',albedo_tint,1)
+        side=node(t,'ShaderNodeTexImage','Side texture',interpolation='Closest',extension='REPEAT'); link(t,scale,0,side,0)
+        node(t,'ShaderNodeTexImage','Side overlay',interpolation='Closest',extension='EXTEND')
+        ocolor=node(t,'ShaderNodeMixRGB','Overlay color',blend_type='MULTIPLY'); ocolor.inputs[0].default_value=1
+        strength=math_node(t,'Overlay strength','MULTIPLY'); strength.inputs[1].default_value=0
+        smix=node(t,'ShaderNodeMixRGB','Side tint',blend_type='MIX'); smix.inputs[0].default_value=0
+        link(t,t.nodes['Side texture'],'Color',smix,1); link(t,ocolor,0,smix,2)
+        geo=node(t,'ShaderNodeNewGeometry','Face normal')
+        sep=node(t,'ShaderNodeSeparateXYZ','Normal Z'); link(t,geo,'Normal',sep,0)
+        top=math_node(t,'Top face','GREATER_THAN',b=.5); link(t,sep,'Z',top,0)
+        choose=node(t,'ShaderNodeMixRGB','Face blend',blend_type='MIX'); choose.inputs[0].default_value=0
+        link(t,top,0,choose,0); link(t,smix,0,choose,1); link(t,choose,0,bs,'Base Color')
+        for name in ('Normal','Roughness'):
+            im=node(t,'ShaderNodeTexImage',name,interpolation='Closest',extension='REPEAT'); link(t,scale,0,im,0)
+        normal=node(t,'ShaderNodeNormalMap','Normal map'); link(t,t.nodes['Normal'],'Color',normal,'Color')
     t.nodes['Tiling'].inputs['Scale'].default_value=p.ground_size/p.ground_tile
     c=biome_color(p,'GRASS') if p.ground_type=='GRASS' else biome_color(p,'WATER') if p.ground_type=='WATER' else rgb({'DIRT':'846044','SAND':'dbc998','STONE':'858585','SNOW':'edf4ff'}[p.ground_type])
     t.nodes['Tint'].inputs[1].default_value=rgba(c)
     t.nodes['Image biome tint'].inputs[2].default_value=rgba(c if p.ground_type in {'GRASS','WATER'} else (1,1,1))
+    t.nodes['Overlay color'].inputs[1].default_value=rgba(biome_color(p,'GRASS'))
+    t.nodes['Overlay strength'].inputs[1].default_value=1 if p.ground_type=='GRASS' else 0
+    ov=t.nodes['Side overlay']; ov.image=side_overlay_image()
+    st=t.nodes['Overlay strength']
+    if ov.image and not st.inputs[0].links:
+        link(t,ov,'Alpha',st,0); link(t,ov,'Color',t.nodes['Overlay color'],2); link(t,st,0,t.nodes['Side tint'],0)
+    top_src=t.nodes['Image biome tint'] if p.ground_image else t.nodes['Tint']
+    choose=t.nodes['Face blend']
+    for l in list(choose.inputs[2].links): t.links.remove(l)
+    link(t,top_src,0,choose,2)
+    side_in=t.nodes['Side tint'].inputs[1]
+    for l in list(side_in.links): t.links.remove(l)
+    if p.ground_side: link(t,t.nodes['Side texture'],'Color','Side tint',1)
+    else: link(t,top_src,0,'Side tint',1)
+    t.nodes['Albedo'].image=p.ground_image
+    t.nodes['Side texture'].image=p.ground_side
     bs=t.nodes['Surface']
     bs.inputs['Roughness'].default_value=.14 if p.ground_type=='WATER' else .85
-    for name,img,socket,source in [('Albedo',p.ground_image,'Base Color','Color'),('Roughness',p.ground_material,'Roughness','Color'),('Normal',p.ground_normal,'Normal','Normal')]:
+    for name,img,socket,source in [('Roughness',p.ground_material,'Roughness','Color'),('Normal',p.ground_normal,'Normal','Normal')]:
         tex=t.nodes[name]; tex.image=img
         for l in list(bs.inputs[socket].links): t.links.remove(l)
         if img:
-            if name=='Albedo': link(t,t.nodes['Image biome tint'],0,bs,socket)
-            else: link(t,t.nodes['Normal map'] if name=='Normal' else tex,source,bs,socket)
-        elif name=='Albedo': link(t,t.nodes['Tint'],0,bs,socket)
+            link(t,t.nodes['Normal map'] if name=='Normal' else tex,source,bs,socket)
 
 
 def cloud_material(scene, faded):

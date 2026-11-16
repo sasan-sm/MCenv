@@ -12,7 +12,7 @@ def section_fields(p, section):
             return ['sky_mode','background_image','background_type','background_stretch' if p.background_type=='IMAGE' else 'background_rotation']
         return ['sky_mode','sun_image','sun_tilt','sun_scale','moon_image','moon_phase','moon_tilt','moon_scale','stars_count','stars_size','stars_size_random','stars_strength']
     if section=='cloud': return ['cloud_mode','cloud_image','cloud_speed','cloud_offset','cloud_height','cloud_size','cloud_blocks','cloud_thickness','cloud_coverage','cloud_seed']
-    if section=='ground': return ['ground_type','ground_image','ground_normal','ground_material','ground_size','ground_height','ground_tile']
+    if section=='ground': return ['ground_type','ground_normal','ground_material','ground_size','ground_height','ground_tile']
     if section=='fog':
         return ['fog_sky','fog_custom']+(['fog_color'] if p.fog_custom else [])+['fog_custom_object']+(['fog_object_color'] if p.fog_custom_object else [])+['fog_distance','fog_size','fog_height']
     if section=='wind': return ['wind_speed','wind_strength','wind_direction','wind_directional_speed','wind_directional_strength']
@@ -20,7 +20,7 @@ def section_fields(p, section):
 
 
 BIOME_FIELDS=['grass_color','foliage_color','water_color','oak_color','spruce_color','birch_color','jungle_color','acacia_color','dark_oak_color','mangrove_color']
-SECTIONS=[('sun','Sunlight',None),('sky','Sky background',None),('cloud','Clouds','clouds'),('ground','Ground','ground')]
+SECTIONS=[('sun','Sunlight',None),('sky','Sky background',None),('cloud','Clouds','clouds'),('ground','Biomes','ground')]
 
 
 def field(layout,p,key):
@@ -43,6 +43,11 @@ def section(layout,p,key,title,toggle=None):
     if getattr(p,'fold_'+key):
         col=layout.column(align=True)
         if toggle: col.enabled=getattr(p,toggle)
+        if key=='ground':
+            for name in ('ground_image','ground_side'): field(col,p,name)
+            biome_col=layout.column(align=True)
+            field(biome_col,p,'biome')
+            if p.biome=='CUSTOM': color_grid(biome_col,p,BIOME_FIELDS)
         for name in section_fields(p,key): field(col,p,name)
 
 
@@ -88,8 +93,6 @@ class MCENV_PT_environment(bpy.types.Panel):
             row.operator(operator,text=key.title(),icon=icon)
             row.prop(p,key,text='')
         for key,title,toggle in SECTIONS: section(layout,p,key,title,toggle)
-        layout.label(text='Biome'); layout.prop(p,'biome',text='')
-        if p.biome=='CUSTOM': color_grid(layout,p,BIOME_FIELDS)
         layout.separator(); layout.label(text='Day scene colors:')
         color_grid(layout,p,['day_sky','day_clouds','day_sunlight','day_ambient'])
         layout.separator(); layout.label(text='Night scene colors:')
