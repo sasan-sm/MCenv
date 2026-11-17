@@ -7,7 +7,7 @@ from (normally the 3D Viewport via the Q menu). Interaction follows the
 mc-env dial: the dial opens under the mouse, the value follows mouse movement,
 click confirms, clicking the center opens the precise-entry popup, scrolling
 steps finely and Esc cancels. The visual base keeps the MCenv overlay look:
-larger ring, brighter ring line, tick marks and the fainter
+larger ring, brighter ring line, tick marks, red pointer line and the fainter
 20%-opacity backdrop so the editor/scene stays clearly visible behind it.
 """
 import math
@@ -25,6 +25,7 @@ BG=(.015,.018,.025,.20)   # MCenv backdrop: fainter than mc-env, scene stays vis
 SOLID=(.08,.08,.08,.85)   # small backdrops for knob and marker, kept readable
 RING=(.8,.82,.85,.9)      # MCenv ring: brighter line
 TICK=(.7,.72,.76,.7)      # MCenv tick marks around the ring
+POINTER=(1,.18,.36,.45)   # MCenv red pointer line
 KNOB=(.65,.65,.65,1)
 
 VALID=('time','rotation')
@@ -170,6 +171,8 @@ class DialMixin:
             value=p.time if self.property_name=='time' else p.rotation
             a=(value/24*math.tau-math.pi/2) if self.property_name=='time' else math.radians(value)+math.pi/2
             hx=cx+math.cos(a)*R; hy=cy+math.sin(a)*R
+            # MCenv red pointer line leads from the center to the knob.
+            shape(s,'LINES',[(cx,cy),(hx,hy)],POINTER)
             rect(s,hx-10,hy-10,20,20,SOLID)
             for j in range(8):
                 aa=j*math.tau/8
