@@ -12,6 +12,7 @@ def section_fields(p, section):
             return ['sky_mode','background_image','background_type','background_stretch' if p.background_type=='IMAGE' else 'background_rotation']
         return ['sky_mode','sun_image','sun_tilt','sun_scale','moon_image','moon_phase','moon_tilt','moon_scale','stars_count','stars_size','stars_size_random','stars_strength']
     if section=='cloud': return ['cloud_mode','cloud_image','cloud_speed','cloud_offset','cloud_height','cloud_size','cloud_blocks','cloud_thickness','cloud_coverage','cloud_seed']
+    if section=='ground': return ['ground_follow_biome']+([] if p.ground_follow_biome else ['ground_type'])+['ground_image','ground_tint_image','ground_normal','ground_material','ground_size','ground_height','ground_tile']
     if section=='fog':
         return ['fog_sky','fog_custom']+(['fog_color'] if p.fog_custom else [])+['fog_custom_object']+(['fog_object_color'] if p.fog_custom_object else [])+['fog_distance','fog_size','fog_height']
     if section=='wind': return ['wind_speed','wind_strength','wind_direction','wind_directional_speed','wind_directional_strength']
@@ -19,7 +20,7 @@ def section_fields(p, section):
 
 
 BIOME_FIELDS=['grass_color','foliage_color','water_color','oak_color','spruce_color','birch_color','jungle_color','acacia_color','dark_oak_color','mangrove_color']
-SECTIONS=[('sun','Sunlight',None),('sky','Sky background',None),('cloud','Clouds','clouds'),('ground','Biomes','ground')]
+SECTIONS=[('sun','Sunlight',None),('sky','Sky background',None),('cloud','Clouds','clouds'),('ground','Ground','ground')]
 
 
 def field(layout,p,key):
@@ -31,40 +32,21 @@ def field(layout,p,key):
     else: layout.prop(p,key)
 
 
-def toggle_row(layout,p,key):
-    # The on/off switch draws as a plain left-aligned checkbox ("[] Label")
-    # with a bare animate dot after it: no split column, no embossed square.
-    row=layout.row(align=True)
-    row.use_property_split=False
-    row.use_property_decorate=False
-    row.prop(p,key)
-    op=row.operator('mcenv.animate_property',text='',icon=animation_icon(p.id_data,key),emboss=False)
-    op.property_name=key
-
-
 def section(layout,p,key,title,toggle=None):
     row=layout.row(align=True)
     row.use_property_split=False
     row.prop(p,'fold_'+key,text=title,icon='TRIA_DOWN' if getattr(p,'fold_'+key) else 'TRIA_RIGHT',emboss=False)
     if toggle:
-        # A bare keyframe dot like the other parameters: no embossed square
-        # button around it, nothing that invites Add to Quick Favorites.
-        op=row.operator('mcenv.animate_property',text='',icon=animation_icon(p.id_data,toggle),emboss=False)
+        row.prop(p,toggle,text='')
+        op=row.operator('mcenv.animate_property',text='',icon=animation_icon(p.id_data,toggle))
         op.property_name=toggle
     if getattr(p,'fold_'+key):
         col=layout.column(align=True)
-        if toggle: toggle_row(col,p,toggle)   # checkbox on the left of its label
-        body=layout.column(align=True)
-        if toggle: body.enabled=getattr(p,toggle)
+        if toggle: col.enabled=getattr(p,toggle)
+        for name in section_fields(p,key): field(col,p,name)
         if key=='ground':
-            # Top texture takes the biome tint across its whole image; the
-            # Side texture is tinted only on the bundled grass overlay strip.
-            for name in ('ground_image','ground_side','ground_direction'): field(body,p,name)
-            biome_col=layout.column(align=True)   # stays usable even with ground off
-            field(biome_col,p,'biome')
-            if p.biome=='CUSTOM': color_grid(biome_col,p,BIOME_FIELDS)
-        else:
-            for name in section_fields(p,key): field(body,p,name)
+            col.operator('mcenv.ground_from_world',icon='TEXTURE')
+            col.label(text='Background plane only; imported terrain is unchanged.',icon='INFO')
 
 
 def color_grid(layout,p,keys):
@@ -109,24 +91,29 @@ class MCENV_PT_environment(bpy.types.Panel):
             row.operator(operator,text=key.title(),icon=icon)
             row.prop(p,key,text='')
         for key,title,toggle in SECTIONS: section(layout,p,key,title,toggle)
-        layout.separator()
-        row=layout.row(align=True)
-        row.use_property_split=False
-        row.prop(p,'fold_scene',text='Scene Colors',icon='TRIA_DOWN' if p.fold_scene else 'TRIA_RIGHT',emboss=False)
-        if p.fold_scene:
-            toggle_row(layout,p,'twilight')   # Twilight lives inside Scene Colors now
-            layout.label(text='Day')
-            color_grid(layout,p,['day_sky','day_clouds','day_sunlight','day_ambient'])
-            layout.label(text='Night')
-            color_grid(layout,p,['night_sky','night_clouds','night_stars','night_ambient'])
+        box=layout.box(); box.label(text='Biome / MCprep materials',icon='WORLD')
+        box.prop(p,'biome',text='')
+        if p.biome=='CUSTOM': color_grid(box,p,BIOME_FIELDS)
+        else: box.operator('mcenv.custom_biome',icon='COLOR')
+        box.prop(p,'biome_scope'); box.prop(p,'biome_texture_mode')
+        box.operator('mcenv.detect_biome',icon='MATERIAL')
+        box.operator('mcenv.restore_biome',icon='LOOP_BACK')
+        box.label(text='Run after MCprep > Prep Materials.',icon='INFO')
+        box.label(text='Bound materials follow biome changes automatically.')
+        box.label(text='Reapply after importing or prepping again.')
+        box.prop(p,'biome_atmosphere')
+        advanced=box.column(align=True)
+        advanced.label(text='Optional resource-pack colormaps:')
+        field(advanced,p,'grass_colormap'); field(advanced,p,'foliage_colormap')
+        layout.separator(); layout.label(text='Day scene colors:')
+        color_grid(layout,p,['day_sky','day_clouds','day_sunlight','day_ambient'])
+        layout.separator(); layout.label(text='Night scene colors:')
+        color_grid(layout,p,['night_sky','night_clouds','night_stars','night_ambient'])
+        layout.prop(p,'twilight')
         section(layout,p,'fog','Fog','fog'); section(layout,p,'wind','Wind','wind')
         layout.prop(p,'texture_fps',text='Texture animation speed')
         layout.separator()
-        # Same header construction as the other fold rows so Blender tools
-        # matches them exactly.
-        row=layout.row(align=True)
-        row.use_property_split=False
-        row.prop(p,'fold_tools',text='Blender tools',icon='TRIA_DOWN' if p.fold_tools else 'TRIA_RIGHT',emboss=False)
+        row=layout.row(); row.prop(p,'fold_tools',text='Blender tools',icon='TRIA_DOWN' if p.fold_tools else 'TRIA_RIGHT',emboss=False)
         if p.fold_tools:
             layout.prop(p,'preview_day_cycle')
             if p.preview_day_cycle: layout.prop(p,'cycle_frames')

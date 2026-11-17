@@ -4,7 +4,7 @@ import math
 import bpy
 from bpy.props import StringProperty, BoolProperty
 from bpy_extras.io_utils import ImportHelper, ExportHelper
-from . import engine
+from . import engine, biome_materials
 
 
 class MCENV_OT_create(bpy.types.Operator):
@@ -19,7 +19,6 @@ class MCENV_OT_create(bpy.types.Operator):
             p.previous_world=context.scene.world
             p.previous_world_empty=context.scene.world is None
             p.enabled=True
-        engine.preload_block_textures()   # bundled texture/block files in the pickers
         engine.sync(context.scene)
         error=engine._ERRORS.get(context.scene.as_pointer())
         if error:
@@ -158,36 +157,96 @@ class MCENV_OT_unwind(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class MCENV_OT_tint(bpy.types.Operator):
-    bl_idname='mcenv.bind_tint'
-    bl_label='Apply Biome Tint to Selected'
-    bl_description='Make local material copies and multiply Base Color by the selected biome tint; does not classify imported blocks automatically'
+def biome_objects(context):
+    return list(context.selected_objects if context.scene.mc_env.biome_scope == 'SELECTED' else context.scene.objects)
+
+
+class MCENV_OT_detect_biome(bpy.types.Operator):
+    bl_idname='mcenv.detect_biome'
+    bl_label='Apply Biome to Imported World'
+    bl_description='After MCprep Prep Materials, detect grass, leaves and water; preserve originals and replace existing MCprep tint without double coloring'
     bl_options={'REGISTER','UNDO'}
 
     def execute(self,context):
-        kind=context.scene.mc_env.tint_kind; count=0
-        for obj in context.selected_objects:
-            if obj.type!='MESH' or obj.get('mcenv_owner') or obj.library: continue
+        result=biome_materials.bind(context.scene,biome_objects(context))
+        engine.sync(context.scene)
+        message=f"Bound {result['slots']} slots / {result['materials']} new materials; {result['skipped']} unrelated, {result['unsupported']} unsupported slots skipped"
+        self.report({'INFO'} if result['slots'] else {'WARNING'},message)
+        return {'FINISHED'} if result['slots'] else {'CANCELLED'}
+
+
+class MCENV_OT_restore_biome(bpy.types.Operator):
+    bl_idname='mcenv.restore_biome'
+    bl_label='Restore Original Materials'
+    bl_description='Restore saved pre-MCenv materials in the chosen scope; leaves user-replaced slots alone'
+    bl_options={'REGISTER','UNDO'}
+
+    def execute(self,context):
+        count=biome_materials.restore(context.scene,biome_objects(context))
+        self.report({'INFO'},f'Restored {count} material slots')
+        return {'FINISHED'}
+
+
+class MCENV_OT_custom_biome(bpy.types.Operator):
+    bl_idname='mcenv.custom_biome'
+    bl_label='Customize This Biome'
+    bl_description='Copy all current preset tint colors to Custom before editing'
+    bl_options={'REGISTER','UNDO'}
+
+    def execute(self,context):
+        p=context.scene.mc_env; ptr=context.scene.as_pointer()
+        kinds=['GRASS','FOLIAGE','WATER','OAK','SPRUCE','BIRCH','JUNGLE','ACACIA','DARK_OAK','MANGROVE']
+        values={kind:engine.biome_color(p,kind) for kind in kinds}
+        engine._BUSY.add(ptr)
+        try:
+            for kind,value in values.items(): setattr(p,kind.lower()+'_color',value)
+            p.biome='CUSTOM'
+        finally: engine._BUSY.discard(ptr)
+        engine.sync(context.scene)
+        return {'FINISHED'}
+
+
+class MCENV_OT_ground_texture(bpy.types.Operator):
+    bl_idname='mcenv.ground_from_world'
+    bl_label='Use Imported Ground Texture'
+    bl_description='Reuse a matching diffuse image already loaded by MCprep (not a mixed side texture or atlas)'
+    bl_options={'REGISTER','UNDO'}
+
+    def execute(self,context):
+        p=context.scene.mc_env; kind=engine.ground_kind(p)
+        names={'GRASS':{'grass_block_top','grass_top'},'DIRT':{'dirt'},
+               'SAND':{'sand','red_sand'},'STONE':{'stone'},
+               'SNOW':{'snow','snow_block'},'WATER':{'water_still','water','water_flow'}}[kind]
+        candidates=[]
+        for obj in context.scene.objects:
+            if obj.type!='MESH' or obj.get('mcenv_owner'): continue
             for slot in obj.material_slots:
-                old=slot.material
-                if not old or not old.use_nodes: continue
-                # Copy first, so unselected objects sharing the original stay untouched.
-                m=old.copy(); m.name=old.name+' • MCenv '+kind; slot.link='OBJECT'; slot.material=m
-                t=m.node_tree
-                for bs in [n for n in t.nodes if n.type=='BSDF_PRINCIPLED']:
-                    socket=bs.inputs['Base Color']
-                    if socket.links and socket.links[0].from_node.get('mcenv_tint'):
-                        tint=socket.links[0].from_node
-                    else:
-                        tint=engine.node(t,'ShaderNodeMixRGB','MCenv Biome tint',blend_type='MULTIPLY')
-                        tint.inputs[0].default_value=1
-                        if socket.links:
-                            source=socket.links[0].from_socket; t.links.new(source,tint.inputs[1])
-                        else: tint.inputs[1].default_value=socket.default_value[:]
-                        t.links.new(tint.outputs[0],socket)
-                    tint['mcenv_tint']=kind; tint.inputs[2].default_value=engine.rgba(engine.biome_color(context.scene.mc_env,kind)); count+=1
-        if not count:
-            self.report({'WARNING'},'Select meshes with Principled BSDF materials'); return {'CANCELLED'}
+                if slot.material:
+                    for image in biome_materials.diffuse_images(slot.material):
+                        if biome_materials.canonical(image.name) in names:
+                            candidates.append(image)
+        if not candidates:
+            self.report({'WARNING'},'No matching separate diffuse texture found; load your own texture or use procedural ground')
+            return {'CANCELLED'}
+        p.ground_image=candidates[0]
+        p.ground_tint_image=kind in {'GRASS','WATER'}
+        engine.sync(context.scene)
+        self.report({'INFO'},'Ground texture loaded. Grass/water follows the biome, with estimated compensation for baked colors.')
+        return {'FINISHED'}
+
+
+class MCENV_OT_tint(bpy.types.Operator):
+    bl_idname='mcenv.bind_tint'
+    bl_label='Apply Biome Tint to Selected'
+    bl_description='Manually bind all materials on selected meshes to Tint kind; use automatic detection for mixed world meshes'
+    bl_options={'REGISTER','UNDO'}
+
+    def execute(self,context):
+        result=biome_materials.bind(context.scene,list(context.selected_objects),context.scene.mc_env.tint_kind)
+        if not result['slots']:
+            self.report({'WARNING'},'No supported editable surface materials selected'); return {'CANCELLED'}
+        engine.sync(context.scene)
+        self.report({'INFO'},f"Bound {result['slots']} material slots. Originals can be restored.")
         return {'FINISHED'}
 
 
@@ -197,10 +256,11 @@ class MCENV_OT_untint(bpy.types.Operator):
     bl_options={'REGISTER','UNDO'}
 
     def execute(self,context):
+        biome_materials.restore(context.scene,list(context.selected_objects))
         for obj in context.selected_objects:
             for slot in obj.material_slots:
                 m=slot.material
-                if not m or not m.use_nodes: continue
+                if not m or not m.use_nodes or m.get('mcenv_biome_owner'): continue
                 t=m.node_tree
                 for n in list(t.nodes):
                     if not n.get('mcenv_tint'): continue
@@ -251,7 +311,7 @@ def preset_data(p):
     data={}
     for prop in p.bl_rna.properties:
         key=prop.identifier
-        if key in SKIP or key.startswith('fold_') or prop.type=='POINTER': continue
+        if key in SKIP or key.startswith('fold_') or prop.type in {'POINTER','COLLECTION'}: continue
         value=getattr(p,key)
         data[key]=list(value) if getattr(prop,'is_array',False) else value
     return {'format':'MCenv','version':1,'settings':data}
@@ -322,7 +382,7 @@ class MCENV_OT_reset(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_animate,MCENV_OT_image,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_tint,MCENV_OT_untint,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
+CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_animate,MCENV_OT_image,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_detect_biome,MCENV_OT_restore_biome,MCENV_OT_custom_biome,MCENV_OT_ground_texture,MCENV_OT_tint,MCENV_OT_untint,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
 
 
 def register():

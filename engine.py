@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Scene-owned data only. No network, external assets, eval or third-party packages."""
 import math
-import os
 import uuid
 import random
+import colorsys
 import bpy
 from mathutils import Vector
 from bpy.app.handlers import persistent
-from .properties import BIOMES, rgb
+from .properties import BIOMES, CLIMATE, rgb, linear
 
 _BUSY = set()
 _ERRORS = {}
@@ -113,12 +113,50 @@ def math_node(t, name, op, a=None, b=None):
 def biome_color(p, kind):
     if p.biome == 'CUSTOM':
         return tuple(getattr(p, kind.lower()+'_color'))
-    b=BIOMES[p.biome]
+    b=BIOMES.get(p.biome, BIOMES['PLAINS'])
     if kind == 'WATER': return rgb(b[3])
-    if kind == 'GRASS': return rgb(b[1])
+    # These Java leaf species keep their own tint across biome changes.
     if kind == 'SPRUCE': return rgb('619961')
     if kind == 'BIRCH': return rgb('80a755')
-    return rgb(b[2])
+    if kind == 'MANGROVE': return rgb('92c648')
+    grass = kind == 'GRASS'
+    image = p.grass_colormap if grass else p.foliage_colormap
+    # Swamps, badlands and cherry groves override the climate colormap.
+    hardcoded = p.biome in {'SWAMP','MANGROVE','BADLANDS','CHERRY_GROVE','PALE_GARDEN'}
+    if image and image.has_data and image.channels >= 3 and not hardcoded:
+        temp,rain = CLIMATE.get(p.biome, (.8,.4))
+        temp=max(0,min(1,temp)); rain=max(0,min(1,rain))*temp
+        x=int((1-temp)*255); y=int((1-rain)*255)
+        width,height=image.size[:]
+        ix=min(width-1,int(x*width/256))
+        # Minecraft colormap coordinates are top-left; Blender pixels bottom-left.
+        iy=height-1-min(height-1,int(y*height/256))
+        k=(iy*width+ix)*image.channels
+        c=tuple(image.pixels[k+i] for i in range(3))
+        if not image.is_float and image.colorspace_settings.name == 'sRGB':
+            c=tuple(linear(v) for v in c)
+        if grass and p.biome == 'DARK_FOREST':
+            # Java dark forest: (sampled sRGB grass + 0x28340a) / 2.
+            def srgb(v): return 12.92*v if v<=.0031308 else 1.055*v**(1/2.4)-.055
+            c=tuple(linear((srgb(v)+int('28340a'[i*2:i*2+2],16)/255)/2) for i,v in enumerate(c))
+        return c
+    return rgb(b[1] if grass else b[2])
+
+
+def ground_kind(p):
+    if not p.ground_follow_biome: return p.ground_type
+    if p.biome in {'DESERT','BEACH','BADLANDS'}: return 'SAND'
+    if p.biome in {'SNOWY','SNOWY_TAIGA','SNOWY_SLOPES','SNOWY_BEACH','GROVE','FROZEN_PEAKS','JAGGED_PEAKS'}: return 'SNOW'
+    if p.biome in {'OCEAN','WARM_OCEAN','LUKEWARM_OCEAN','COLD_OCEAN','FROZEN_OCEAN','RIVER','FROZEN_RIVER'}: return 'WATER'
+    if p.biome in {'STONY_SHORE','STONY_PEAKS'}: return 'STONE'
+    return 'GRASS'
+
+
+def biome_sky(p):
+    if p.biome == 'PALE_GARDEN': return rgb('b9b9b9')
+    temp=CLIMATE.get(p.biome, (.8,.4))[0]
+    t=max(-1,min(1,temp/3))
+    return tuple(linear(v) for v in colorsys.hsv_to_rgb(.6222222-t*.05,.5+t*.1,1))
 
 
 def world_setup(scene):
@@ -278,132 +316,66 @@ def stars_setup(scene, night):
     if hasattr(m,'surface_render_method'): m.surface_render_method='DITHERED'
 
 
-def side_overlay_image():
-    """Bundled grayscale grass fringe mask; its alpha marks the tinted strip."""
-    name='MCenv Grass Side Overlay'
-    im=bpy.data.images.get(name)
-    if im is None:
-        try:
-            im=bpy.data.images.load(os.path.join(os.path.dirname(__file__),'grass_block_side_overlay.png'),check_existing=True)
-            im.name=name
-            im.colorspace_settings.name='Non-Color'
-        except Exception: return None
-    return im
-
-
-# Starter block textures shipped inside texture/block/ of the extension folder.
-BLOCK_TEXTURES=('m_grass_block_top.png','m_grass_block_side.png','s_grass_block_top.png','s_grass_block_side.png')
-GROUND_SIZE=1024     # the ground sheet spans this many one-block repeats
-GROUND_HEIGHT=-.02   # keeps the ground sheet just under block geometry
-GROUND_TILE=1        # one texture repeat per block
-
-
-def block_texture(name):
-    """Get-or-load one of the textures bundled in texture/block/."""
-    im=bpy.data.images.get(name)
-    if im is None:
-        path=os.path.join(os.path.dirname(__file__),'texture','block',name)
-        if not os.path.exists(path): return None
-        try:
-            im=bpy.data.images.load(path,check_existing=True)
-            im.name=name
-        except Exception: return None
-    return im
-
-
-def preload_block_textures():
-    # Load all bundled block textures once so the image pickers list them.
-    for name in BLOCK_TEXTURES: block_texture(name)
-
-
-def ground_top_material(scene):
-    """Slot 1: up-facing geometry. Diffuse Texture -> biome tint -> Principled."""
-    m=material(scene,'Ground Top'); t=m.node_tree
-    if m.get('mcenv_ground_tree')!='v3':
-        t.nodes.clear(); m['mcenv_ground_tree']='v3'
-        out=node(t,'ShaderNodeOutputMaterial','Output')
-        bs=node(t,'ShaderNodeBsdfPrincipled','Surface'); link(t,bs,0,out,0)
-        bs.inputs['Metallic'].default_value=0
-        bs.inputs['Roughness'].default_value=.7
-        bs.inputs['IOR'].default_value=1.5
-        coord=node(t,'ShaderNodeTexCoord','Coordinates')
-        scale=node(t,'ShaderNodeVectorMath','Tiling',operation='SCALE')
-        link(t,coord,'Generated',scale,0)
-        # Direction rotates only the top texture; quarter turns keep the
-        # per-block repeat grid aligned while the pattern spins inside it.
-        rot=node(t,'ShaderNodeMapping','Direction')
-        link(t,scale,0,rot,'Vector')
-        tex=node(t,'ShaderNodeTexImage','Diffuse Texture',interpolation='Closest',extension='REPEAT')
-        link(t,rot,0,tex,'Vector')
-        tint=node(t,'ShaderNodeMixRGB','Biome tint',blend_type='MULTIPLY'); tint.inputs[0].default_value=1
-        link(t,tex,'Color',tint,1); link(t,tint,0,bs,'Base Color')
-    return m
-
-
-def ground_side_material(scene):
-    """Slot 2: side-facing geometry. Diffuse Texture, grass fringe biome-tinted."""
-    m=material(scene,'Ground Side'); t=m.node_tree
-    if m.get('mcenv_ground_tree')!='v3':
-        t.nodes.clear(); m['mcenv_ground_tree']='v3'
-        out=node(t,'ShaderNodeOutputMaterial','Output')
-        bs=node(t,'ShaderNodeBsdfPrincipled','Surface'); link(t,bs,0,out,0)
-        bs.inputs['Metallic'].default_value=0
-        bs.inputs['Roughness'].default_value=.7
-        bs.inputs['IOR'].default_value=1.5
-        coord=node(t,'ShaderNodeTexCoord','Coordinates')
-        scale=node(t,'ShaderNodeVectorMath','Tiling',operation='SCALE')
-        link(t,coord,'Generated',scale,0)
-        tex=node(t,'ShaderNodeTexImage','Diffuse Texture',interpolation='Closest',extension='REPEAT')
-        link(t,scale,0,tex,'Vector')
-        node(t,'ShaderNodeTexImage','Grass overlay',interpolation='Closest',extension='EXTEND')
-        ocolor=node(t,'ShaderNodeMixRGB','Overlay color',blend_type='MULTIPLY'); ocolor.inputs[0].default_value=1
-        smix=node(t,'ShaderNodeMixRGB','Side tint',blend_type='MIX'); smix.inputs[0].default_value=0
-        link(t,tex,'Color',smix,1); link(t,ocolor,0,smix,2); link(t,smix,0,bs,'Base Color')
-    return m
-
-
 def ground_setup(scene):
     p=scene.mc_env; o=object_for(scene,'Ground')
-    # Defaults come from the bundled texture/block folder until the user picks their own.
-    if p.ground_image is None: p.ground_image=block_texture('m_grass_block_top.png')
-    if p.ground_side is None: p.ground_side=block_texture('m_grass_block_side.png')
     if not o.data.vertices:
         cube_geometry(o.data,[(0,0,0)],1,1,1,True)
         uv=o.data.uv_layers.new(name='UVMap')
         for poly in o.data.polygons:
             for li,co in zip(poly.loop_indices,[(0,0),(1,0),(1,1),(0,1)]): uv.data[li].uv=co
-    o.location=(0,0,GROUND_HEIGHT); o.scale=(GROUND_SIZE,GROUND_SIZE,1)
+    o.location=(0,0,p.ground_height); o.scale=(p.ground_size,p.ground_size,1)
     o.hide_render=not p.ground; o.hide_viewport=not p.ground
-    top=ground_top_material(scene); side=ground_side_material(scene)
-    # Two material slots like the reference grass block: slot 1 is the top
-    # shader, slot 2 the side shader. Up-facing polygons use slot 1.
-    mats=o.data.materials
-    if len(mats)!=2 or mats[0]!=top or mats[1]!=side:
-        mats.clear(); mats.append(top); mats.append(side)
-    for poly in o.data.polygons:
-        poly.material_index=0 if poly.normal.z>.5 else 1
-    tt=top.node_tree
-    tt.nodes['Tiling'].inputs['Scale'].default_value=GROUND_SIZE/GROUND_TILE
-    tt.nodes['Direction'].inputs['Rotation'].default_value=(0,0,math.radians(float(p.ground_direction)))
-    tex=tt.nodes['Diffuse Texture']; tex.image=p.ground_image
-    tint=tt.nodes['Biome tint']
-    tint.inputs[2].default_value=rgba(biome_color(p,'GRASS'))
-    if p.ground_image:
-        tint.inputs[0].default_value=1
-        if not tint.inputs[1].links: link(tt,tex,'Color',tint,1)
-    else:
-        # No top texture: fall back to the plain biome grass color.
-        for l in list(tint.inputs[1].links): tt.links.remove(l)
-        tint.inputs[0].default_value=0
-        tint.inputs[1].default_value=rgba(biome_color(p,'GRASS'))
-    ts=side.node_tree
-    ts.nodes['Tiling'].inputs['Scale'].default_value=GROUND_SIZE/GROUND_TILE
-    ts.nodes['Diffuse Texture'].image=p.ground_side
-    ts.nodes['Overlay color'].inputs[1].default_value=rgba(biome_color(p,'GRASS'))
-    ov=ts.nodes['Grass overlay']; ov.image=side_overlay_image()
-    smix=ts.nodes['Side tint']
-    if ov.image and not smix.inputs[0].links:
-        link(ts,ov,'Alpha',smix,0); link(ts,ov,'Color',ts.nodes['Overlay color'],2)
+    m=material(scene,'Ground'); put_mat(o,m); t=m.node_tree
+    if not t.nodes.get('Surface'):
+        t.nodes.clear()
+        out=node(t,'ShaderNodeOutputMaterial','Output')
+        bs=node(t,'ShaderNodeBsdfPrincipled','Surface'); link(t,bs,0,out,0)
+        bs.inputs['Roughness'].default_value=.85
+        coord=node(t,'ShaderNodeTexCoord','Coordinates')
+        scale=node(t,'ShaderNodeVectorMath','Tiling',operation='SCALE')
+        link(t,coord,'UV',scale,0)
+        noise=node(t,'ShaderNodeTexNoise','Pixels'); noise.inputs['Scale'].default_value=16; noise.inputs['Detail'].default_value=0
+        # Quantize coordinates before noise for blocky original texture.
+        snap=node(t,'ShaderNodeVectorMath','Pixel grid',operation='SNAP'); snap.inputs[1].default_value=(1/16,1/16,1/16)
+        link(t,scale,0,snap,0); link(t,snap,0,noise,0)
+        tint=node(t,'ShaderNodeMixRGB','Tint',blend_type='MULTIPLY'); tint.inputs[0].default_value=.3
+        link(t,noise,'Fac',tint,2); link(t,tint,0,bs,'Base Color')
+        for name in ('Albedo','Normal','Roughness'):
+            im=node(t,'ShaderNodeTexImage',name,interpolation='Closest',extension='REPEAT'); link(t,scale,0,im,0)
+        normal=node(t,'ShaderNodeNormalMap','Normal map'); link(t,t.nodes['Normal'],'Color',normal,'Color')
+        albedo_tint=node(t,'ShaderNodeMixRGB','Image biome tint',blend_type='MULTIPLY')
+        albedo_tint.inputs[0].default_value=1
+        link(t,t.nodes['Albedo'],'Color',albedo_tint,1)
+    # Also migrate existing ground materials: Generated coordinates collapse
+    # on a zero-thickness plane; UV gives stable one-block texture repeats.
+    link(t,t.nodes['Coordinates'],'UV',t.nodes['Tiling'],0)
+    t.nodes['Tiling'].inputs['Scale'].default_value=p.ground_size/p.ground_tile
+    kind=ground_kind(p)
+    c=biome_color(p,'GRASS') if kind=='GRASS' else biome_color(p,'WATER') if kind=='WATER' else rgb({'DIRT':'846044','SAND':'dbc998','STONE':'858585','SNOW':'edf4ff'}[kind])
+    t.nodes['Tint'].inputs[1].default_value=rgba(c)
+    image_color=(1,1,1)
+    if kind in {'GRASS','WATER'} and p.ground_tint_image:
+        from .biome_materials import image_baseline
+        image=p.ground_image
+        signature=str((image.as_pointer(),tuple(image.size),image.colorspace_settings.name,kind)) if image else ''
+        if m.get('mcenv_ground_image') != signature:
+            m['mcenv_ground_baseline']=image_baseline(image,kind=='GRASS')[0]
+            m['mcenv_ground_image']=signature
+        baseline=m.get('mcenv_ground_baseline',(1,1,1))
+        image_color=tuple(c[i]/max(.04,baseline[i]) for i in range(3))
+    t.nodes['Image biome tint'].inputs[2].default_value=rgba(image_color)
+    bs=t.nodes['Surface']
+    bs.inputs['Roughness'].default_value=.14 if kind=='WATER' else .85
+    bs.inputs['IOR'].default_value=1.333 if kind=='WATER' else 1.45
+    transmission=bs.inputs.get('Transmission Weight') or bs.inputs.get('Transmission')
+    if transmission: transmission.default_value=.35 if kind=='WATER' else 0
+    for name,img,socket,source in [('Albedo',p.ground_image,'Base Color','Color'),('Roughness',p.ground_material,'Roughness','Color'),('Normal',p.ground_normal,'Normal','Normal')]:
+        tex=t.nodes[name]; tex.image=img
+        for l in list(bs.inputs[socket].links): t.links.remove(l)
+        if img:
+            if name=='Albedo': link(t,t.nodes['Image biome tint'],0,bs,socket)
+            else: link(t,t.nodes['Normal map'] if name=='Normal' else tex,source,bs,socket)
+        elif name=='Albedo': link(t,t.nodes['Tint'],0,bs,socket)
 
 
 def cloud_material(scene, faded):
@@ -464,7 +436,7 @@ def clouds_setup(scene, seconds, c):
 def fog_setup(scene, sky):
     p=scene.mc_env; o=object_for(scene,'Fog')
     if not o.data.vertices: cube_geometry(o.data,[(0,0,0)])
-    span=2048
+    span=max(p.ground_size,2048)
     o.location=(0,0,p.fog_height/2); o.scale=(span,span,p.fog_height)
     o.hide_render=not p.fog; o.hide_viewport=not p.fog; o.display_type='WIRE'
     m=material(scene,'Fog'); put_mat(o,m); t=m.node_tree
@@ -503,7 +475,7 @@ def sync(scene):
         twilight=max(0,1-abs(elevation)/.28)*int(p.twilight)
         # Stars start appearing shortly after sunset and vanish near sunrise.
         star_night=max(0,min(1,(.05-elevation)/.25))
-        sky=mix(p.night_sky,p.day_sky,daylight)
+        sky=mix(p.night_sky,biome_sky(p) if p.biome_atmosphere and p.biome!='CUSTOM' else p.day_sky,daylight)
         sky=mix(sky,rgb('f6a16a'),twilight*.5)
         if p.fog and p.fog_sky: sky=mix(sky,p.fog_color if p.fog_custom else sky,.35)
         w=world_setup(scene); t=w.node_tree
@@ -543,6 +515,8 @@ def sync(scene):
 
 def update_bound(scene, seconds):
     p=scene.mc_env
+    from .biome_materials import refresh
+    seen_materials=set()
     for obj in scene.objects:
         for mod in obj.modifiers:
             if mod.type=='NODES' and mod.get('mcenv_wind') and mod.node_group:
@@ -555,9 +529,13 @@ def update_bound(scene, seconds):
         for slot in obj.material_slots:
             m=slot.material
             if not m or not m.use_nodes: continue
+            if m.as_pointer() in seen_materials: continue
+            seen_materials.add(m.as_pointer())
+            # Never update another scene's bound copy when objects are shared.
+            if m.get('mcenv_biome_owner') not in (None,p.owner_id): continue
+            refresh(m,p)
             t=m.node_tree
             for n in t.nodes:
-                if n.get('mcenv_tint'): n.inputs[2].default_value=rgba(biome_color(p,n['mcenv_tint']))
                 if n.get('mcenv_atlas'):
                     rows=n['mcenv_atlas']; n.inputs[1].default_value=(0,(rows-1-int(seconds*p.texture_fps)%rows)/rows,0)
 

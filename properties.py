@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import bpy
 from bpy.props import (BoolProperty, FloatProperty, IntProperty, EnumProperty,
-                       FloatVectorProperty, StringProperty, PointerProperty)
+                       FloatVectorProperty, StringProperty, PointerProperty, CollectionProperty)
 
 
 def linear(v):
@@ -12,12 +12,13 @@ def rgb(hexcode):
     return tuple(linear(int(hexcode[i:i+2], 16) / 255) for i in (0, 2, 4))
 
 
-# Original preset approximations; not extracted Minecraft textures or colormaps.
+# Java-style fallback tint values. No Minecraft textures are redistributed.
+# Resource-pack colormaps, when supplied, are sampled by temperature/rainfall.
 BIOMES = {
     'PLAINS': ('Plains', '91bd59', '77ab2f', '3f76e4'),
     'FOREST': ('Forest', '79c05a', '59ae30', '3f76e4'),
     'BIRCH_FOREST': ('Birch Forest', '88bb67', '6ba941', '3f76e4'),
-    'DARK_FOREST': ('Dark Forest', '507a32', '507a32', '3f76e4'),
+    'DARK_FOREST': ('Dark Forest', '507a32', '59ae30', '3f76e4'),
     'TAIGA': ('Taiga', '86b783', '68a464', '3f76e4'),
     'SNOWY': ('Snowy Plains', '80b497', '60a17b', '3938c9'),
     'DESERT': ('Desert', 'bfb755', 'aea42a', '3f76e4'),
@@ -25,10 +26,65 @@ BIOMES = {
     'JUNGLE': ('Jungle', '59c93c', '30bb0b', '3f76e4'),
     'SWAMP': ('Swamp', '6a7039', '6a7039', '617b64'),
     'MANGROVE': ('Mangrove Swamp', '6a7039', '8db127', '3a7a6a'),
+    'FLOWER_FOREST': ('Flower Forest', '79c05a', '59ae30', '3f76e4'),
+    'OLD_GROWTH_BIRCH': ('Old Growth Birch Forest', '88bb67', '6ba941', '3f76e4'),
+    'OLD_GROWTH_PINE': ('Old Growth Pine Taiga', '86b87f', '68a55f', '3f76e4'),
+    'OLD_GROWTH_SPRUCE': ('Old Growth Spruce Taiga', '86b783', '68a464', '3f76e4'),
+    'SNOWY_TAIGA': ('Snowy Taiga', '80b497', '60a17b', '3d57d6'),
+    'WINDSWEPT_HILLS': ('Windswept Hills', '8ab689', '6da36b', '3f76e4'),
+    'MEADOW': ('Meadow', '83bb6d', '63a948', '0e4ecf'),
+    'GROVE': ('Grove', '80b497', '60a17b', '3f76e4'),
+    'SNOWY_SLOPES': ('Snowy Slopes', '80b497', '60a17b', '3f76e4'),
+    'FROZEN_PEAKS': ('Frozen Peaks', '80b497', '60a17b', '3f76e4'),
+    'JAGGED_PEAKS': ('Jagged Peaks', '80b497', '60a17b', '3f76e4'),
+    'STONY_PEAKS': ('Stony Peaks', '9abe4b', '82ac1e', '3f76e4'),
+    'SPARSE_JUNGLE': ('Sparse Jungle', '64c73f', '3eb80f', '3f76e4'),
+    'BAMBOO_JUNGLE': ('Bamboo Jungle', '59c93c', '30bb0b', '3f76e4'),
+    'CHERRY_GROVE': ('Cherry Grove', 'b6db61', 'b6db61', '5db7ef'),
+    'MUSHROOM_FIELDS': ('Mushroom Fields', '55c93f', '2bbb0f', '3f76e4'),
+    'RIVER': ('River', '8eb971', '71a74d', '3f76e4'),
+    'FROZEN_RIVER': ('Frozen River', '80b497', '60a17b', '3938c9'),
+    'BEACH': ('Beach', '91bd59', '77ab2f', '3f76e4'),
+    'SNOWY_BEACH': ('Snowy Beach', '83b593', '64a278', '3d57d6'),
+    'STONY_SHORE': ('Stony Shore', '8ab689', '6da36b', '3f76e4'),
+    'WARM_OCEAN': ('Warm Ocean', '8eb971', '71a74d', '43d5ee'),
+    'LUKEWARM_OCEAN': ('Lukewarm Ocean', '8eb971', '71a74d', '45adf2'),
+    'COLD_OCEAN': ('Cold Ocean', '8eb971', '71a74d', '3d57d6'),
+    'FROZEN_OCEAN': ('Frozen Ocean', '80b497', '60a17b', '3938c9'),
     'BADLANDS': ('Badlands', '90814d', '9e814d', '3f76e4'),
-    'OCEAN': ('Ocean', '91bd59', '77ab2f', '3f76e4'),
+    'OCEAN': ('Ocean', '8eb971', '71a74d', '3f76e4'),
+    'PALE_GARDEN': ('Pale Garden', '778272', '878d76', '3f76e4'),
     'CUSTOM': ('Custom', '91bd59', '77ab2f', '3f76e4'),
 }
+
+
+# (temperature, downfall) drives Java's triangular grass/foliage colormap.
+CLIMATE = {
+    'PLAINS': (.8,.4), 'FOREST': (.7,.8), 'BIRCH_FOREST': (.6,.6),
+    'DARK_FOREST': (.7,.8), 'TAIGA': (.25,.8), 'SNOWY': (0,.5),
+    'DESERT': (2,0), 'SAVANNA': (1.2,0), 'JUNGLE': (.95,.9),
+    'SWAMP': (.8,.9), 'MANGROVE': (.8,.9), 'BADLANDS': (2,0),
+    'FLOWER_FOREST': (.7,.8), 'OLD_GROWTH_BIRCH': (.6,.6),
+    'OLD_GROWTH_PINE': (.3,.8), 'OLD_GROWTH_SPRUCE': (.25,.8),
+    'SNOWY_TAIGA': (-.5,.4), 'WINDSWEPT_HILLS': (.2,.3),
+    'MEADOW': (.5,.8), 'GROVE': (-.2,.8), 'SNOWY_SLOPES': (-.3,.9),
+    'FROZEN_PEAKS': (-.7,.9), 'JAGGED_PEAKS': (-.7,.9), 'STONY_PEAKS': (1,.3),
+    'SPARSE_JUNGLE': (.95,.8), 'BAMBOO_JUNGLE': (.95,.9),
+    'CHERRY_GROVE': (.5,.8), 'MUSHROOM_FIELDS': (.9,1),
+    'RIVER': (.5,.5), 'FROZEN_RIVER': (0,.5), 'BEACH': (.8,.4),
+    'SNOWY_BEACH': (.05,.3), 'STONY_SHORE': (.2,.3),
+    'OCEAN': (.5,.5), 'WARM_OCEAN': (.5,.5), 'LUKEWARM_OCEAN': (.5,.5),
+    'COLD_OCEAN': (.5,.5), 'FROZEN_OCEAN': (0,.5), 'PALE_GARDEN': (.7,.8),
+}
+
+
+# Explicit values preserve enums saved by MCenv 1.0.0.x in existing .blend files.
+_LEGACY_BIOMES = ['PLAINS','FOREST','BIRCH_FOREST','DARK_FOREST','TAIGA','SNOWY',
+                  'DESERT','SAVANNA','JUNGLE','SWAMP','MANGROVE','BADLANDS','OCEAN','CUSTOM']
+_BIOME_IDS = {key:index for index,key in enumerate(_LEGACY_BIOMES)}
+for _key in BIOMES:
+    if _key not in _BIOME_IDS: _BIOME_IDS[_key] = len(_BIOME_IDS)
+BIOME_ITEMS = [(key,value[0],'',0,_BIOME_IDS[key]) for key,value in BIOMES.items()]
 
 
 def update(self, context):
@@ -60,7 +116,21 @@ def color(name, value):
                                min=0, max=1, default=rgb(value), update=update)
 
 
+class MCENV_MaterialBinding(bpy.types.PropertyGroup):
+    object: PointerProperty(type=bpy.types.Object)
+    slot_index: IntProperty()
+    original: PointerProperty(type=bpy.types.Material)
+    bound: PointerProperty(type=bpy.types.Material)
+    original_link: StringProperty(default='DATA')
+
+
 class MCENV_Settings(bpy.types.PropertyGroup):
+    material_bindings: CollectionProperty(type=MCENV_MaterialBinding)
+    biome_scope: EnumProperty(name='Apply to', items=[('SCENE','Entire imported scene','All editable meshes in this scene'),('SELECTED','Selected objects','Only selected editable meshes')], default='SCENE')
+    biome_texture_mode: EnumProperty(name='Texture colors', items=[('AUTO','Auto','Reuse active MCprep tint; compensate baked colors when possible'),('GRAYSCALE','Grayscale','Multiply untinted grayscale textures'),('COLORED','Already colored','Compensate estimated baked texture color')], default='AUTO')
+    biome_atmosphere: BoolProperty(name='Biome sky color', description='Use a temperature-based Minecraft-style daytime sky without overwriting day/night colors', default=False, update=update)
+    grass_colormap: PointerProperty(name='Grass colormap', type=bpy.types.Image, description='Optional resource-pack textures/colormap/grass.png', update=update)
+    foliage_colormap: PointerProperty(name='Foliage colormap', type=bpy.types.Image, description='Optional resource-pack textures/colormap/foliage.png', update=update)
     enabled: BoolProperty(default=False)
     owner_id: StringProperty(options={'HIDDEN'})
     previous_world: PointerProperty(type=bpy.types.World)
@@ -98,11 +168,17 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     cloud_thickness: FloatProperty(name='Thickness', default=4, min=0, soft_max=20, update=update)
     cloud_coverage: FloatProperty(name='Coverage', default=.42, min=0, max=1, update=update)
     cloud_seed: IntProperty(name='Seed', default=17, min=0, update=update)
-    ground: BoolProperty(name='Ground', default=True, update=update)
-    ground_image: PointerProperty(name='Top texture', type=bpy.types.Image, description='Texture on top-facing geometry; the biome tint covers the whole image. Starts as the bundled m_grass_block_top', update=update)
-    ground_side: PointerProperty(name='Side texture', type=bpy.types.Image, description='Texture on side-facing geometry; the biome tint only colors the grass overlay strip at the top. Starts as the bundled m_grass_block_side', update=update)
-    ground_direction: EnumProperty(name='Direction', description='Rotation of the top texture only; the side texture keeps its orientation', items=[('0','0°','Top texture upright'),('90','90°','Rotate the top texture by 90 degrees'),('180','180°','Rotate the top texture by 180 degrees'),('360','360°','Rotate the top texture by a full turn')], default='0', update=update)
-    biome: EnumProperty(name='Biome', items=[(k,v[0],'') for k,v in BIOMES.items()], default='PLAINS', update=update)
+    ground: BoolProperty(name='Ground', description='Optional background plane, independent of the imported Minecraft terrain', default=False, update=update)
+    ground_follow_biome: BoolProperty(name='Surface follows biome', description='Choose sand, snow, stone, water or grass for this background plane; does not change imported blocks', default=False, update=update)
+    ground_tint_image: BoolProperty(name='Tint ground texture', description='Follow biome tint; compensate estimated baked grass/water color. Disable to keep the texture original colors', default=True, update=update)
+    ground_type: EnumProperty(name='Ground block', items=[('GRASS','Grass','Biome-tinted grass'),('DIRT','Dirt','Brown dirt'),('SAND','Sand','Warm sand'),('STONE','Stone','Grey stone'),('SNOW','Snow','Snow'),('WATER','Water','Biome water')], update=update)
+    ground_size: FloatProperty(name='Size', default=1024, min=1, soft_max=4096, update=update)
+    ground_height: FloatProperty(name='Height', default=-.02, update=update)
+    ground_tile: FloatProperty(name='Texture tile size', default=1, min=.01, soft_max=16, update=update)
+    ground_image: PointerProperty(name='Ground texture', type=bpy.types.Image, update=update)
+    ground_normal: PointerProperty(name='Normal map', type=bpy.types.Image, update=update)
+    ground_material: PointerProperty(name='Roughness map', type=bpy.types.Image, update=update)
+    biome: EnumProperty(name='Biome', items=BIOME_ITEMS, default='PLAINS', update=update)
     grass_color: color('Grass', '91bd59')
     foliage_color: color('Foliage', '77ab2f')
     water_color: color('Water', '3f76e4')
@@ -112,7 +188,7 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     jungle_color: color('Jungle leaves', '77ab2f')
     acacia_color: color('Acacia leaves', '77ab2f')
     dark_oak_color: color('Dark oak leaves', '77ab2f')
-    mangrove_color: color('Mangrove leaves', '8db127')
+    mangrove_color: color('Mangrove leaves', '92c648')
     day_sky: color('Sky', '78a7ff')
     day_clouds: color('Clouds', 'ffffff')
     day_sunlight: color('Sunlight', 'fff7e2')
@@ -145,13 +221,13 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     fold_sky: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_cloud: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_ground: BoolProperty(default=False, options={'SKIP_SAVE'})
-    fold_scene: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_fog: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_wind: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_tools: BoolProperty(default=False, options={'SKIP_SAVE'})
 
 
 def register():
+    bpy.utils.register_class(MCENV_MaterialBinding)
     bpy.utils.register_class(MCENV_Settings)
     bpy.types.Scene.mc_env = PointerProperty(type=MCENV_Settings)
 
@@ -159,3 +235,4 @@ def register():
 def unregister():
     del bpy.types.Scene.mc_env
     bpy.utils.unregister_class(MCENV_Settings)
+    bpy.utils.unregister_class(MCENV_MaterialBinding)
