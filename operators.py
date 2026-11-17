@@ -19,6 +19,7 @@ class MCENV_OT_create(bpy.types.Operator):
             p.previous_world=context.scene.world
             p.previous_world_empty=context.scene.world is None
             p.enabled=True
+        engine.preload_block_textures()   # bundled texture/block files in the pickers
         engine.sync(context.scene)
         error=engine._ERRORS.get(context.scene.as_pointer())
         if error:
