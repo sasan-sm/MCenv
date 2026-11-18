@@ -7,18 +7,20 @@ is required to use this module. A bundled RGBA overlay handles grass sides.
 Nested shader groups and mixed texture atlases are intentionally not guessed:
 use separate, per-block materials with local 0..1 UVs.
 """
-import os
 import re
 import sys
 import bpy
 from .properties import linear
+from .assets import block_image
 
 LEAVES = ('dark_oak', 'mangrove', 'spruce', 'birch', 'jungle', 'acacia', 'oak')
 GRASS = {'grass', 'short_grass', 'tall_grass', 'tall_grass_top',
          'tall_grass_bottom', 'grass_block', 'grass_block_top', 'grass_top',
          'grass_block_overlay', 'grass_block_side_overlay', 'grass_side_overlay',
          'fern', 'large_fern_top', 'large_fern_bottom', 'double_plant_grass',
-         'double_plant_fern'}
+         'double_plant_fern', 'large_fern', 'sugar_cane', 'reeds', 'bush',
+         'pink_petals_stem', 'wildflowers_stem', 'potted_fern'}
+DRY = {'leaf_litter'}
 SIDES = {'grass_block_side', 'grass_side', 'grass_side_saturated'}
 WATER = {'water', 'water_still', 'water_flow', 'flowing_water', 'stationary_water',
          'water_overlay'}
@@ -53,6 +55,7 @@ def canonical(name):
 def classify_name(name):
     name = canonical(name)
     if name in GRASS: return 'GRASS'
+    if name in DRY: return 'DRY_FOLIAGE'
     if name in SIDES: return 'GRASS_SIDE'
     if name in WATER: return 'WATER'
     if name in {'vine', 'vines'}: return 'FOLIAGE'
@@ -95,8 +98,8 @@ def diffuse_images(material):
 
 
 def classify(material):
-    # Original colored leaves, moss, sugar cane, flowers and lily pads are not
-    # biome-tinted in Java; conservative exact matches avoid false positives.
+    # Exact Java texture matches: stems are separate from flower petals;
+    # moss, cherry/azalea leaves and lily pads must not receive biome tint.
     images = diffuse_images(material)
     image_kinds = {classify_name(im.name) or classify_name(im.filepath) for im in images}
     image_kinds.discard(None)
@@ -162,16 +165,7 @@ def side_overlay_image(settings):
     if settings.grass_side_overlay:
         image = settings.grass_side_overlay
         return image if image.size[0] and image.channels == 4 else None
-    for image in bpy.data.images:
-        if image.get('mcenv_builtin_side_overlay'):
-            return image
-    path = os.path.join(os.path.dirname(__file__), 'textures',
-                        'grass_block_side_overlay.png')
-    image = bpy.data.images.load(path, check_existing=True)
-    image['mcenv_builtin_side_overlay'] = True
-    image.alpha_mode = 'STRAIGHT'
-    image.pack()
-    return image
+    return block_image(settings, 'grass_block_side_overlay.png')
 
 
 def refresh(material, settings):
@@ -305,7 +299,7 @@ def prepare(material, settings, kind):
     images = diffuse_images(material)
     image = images[0] if len(images) == 1 else None
     mode = settings.biome_texture_mode
-    baseline, colored = image_baseline(image, kind != 'WATER' and mode != 'COLORED')
+    baseline, _ = image_baseline(image, kind not in {'WATER','DRY_FOLIAGE'} and mode != 'COLORED')
     # Replace MCprep's active grayscale tint in place. This preserves its
     # animation, alpha, normals, roughness and every downstream shader branch.
     stages = [n for n in tree.nodes if mix_sockets(n) and
@@ -337,11 +331,6 @@ def prepare(material, settings, kind):
         tree.links.new(n.outputs[0], socket)
     refresh(material, settings)
     return True
-
-
-def binding_for(settings, obj, index):
-    return next((r for r in settings.material_bindings
-                 if r.object == obj and r.slot_index == index), None)
 
 
 def bind(scene, objects, manual_kind=None):
