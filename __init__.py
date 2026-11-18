@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 bl_info = {
-    "name": "MCenv", "author": "MCenv contributors <sasan.sm23@gmail.com>", "version": (0, 6, 0),
+    "name": "MCenv", "author": "MCenv contributors <sasan.sm23@gmail.com>", "version": (0, 7, 0),
     "blender": (4, 2, 0), "location": "Properties > World > MCenv",
     "description": "Minecraft-inspired environment, sky, clouds, biomes, fog and wind",
     "category": "Lighting",
@@ -19,9 +19,9 @@ def register():
 
 
 def unregister():
-    engine.unregister()
-    preferences.unregister()
     overlay.unregister()
+    preferences.unregister()
+    engine.unregister()
     ui.unregister()
     operators.unregister()
     properties.unregister()
