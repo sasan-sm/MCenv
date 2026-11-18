@@ -54,6 +54,8 @@ BIOMES = {
     'BADLANDS': ('Badlands', '90814d', '9e814d', '3f76e4'),
     'OCEAN': ('Ocean', '8eb971', '71a74d', '3f76e4'),
     'PALE_GARDEN': ('Pale Garden', '778272', '878d76', '3f76e4'),
+    # Append new presets here to preserve all 1.1.0 numeric enum IDs.
+    'DAPPLED_FOREST': ('Dappled Forest', 'df6827', 'e68e30', '375154'),
     'CUSTOM': ('Custom', '91bd59', '77ab2f', '3f76e4'),
 }
 
@@ -61,7 +63,8 @@ BIOMES = {
 # (temperature, downfall) drives Java's triangular grass/foliage colormap.
 CLIMATE = {
     'PLAINS': (.8,.4), 'FOREST': (.7,.8), 'BIRCH_FOREST': (.6,.6),
-    'DARK_FOREST': (.7,.8), 'TAIGA': (.25,.8), 'SNOWY': (0,.5),
+    'DARK_FOREST': (.7,.8), 'DAPPLED_FOREST': (.6,.6),
+    'TAIGA': (.25,.8), 'SNOWY': (0,.5),
     'DESERT': (2,0), 'SAVANNA': (1.2,0), 'JUNGLE': (.95,.9),
     'SWAMP': (.8,.9), 'MANGROVE': (.8,.9), 'BADLANDS': (2,0),
     'FLOWER_FOREST': (.7,.8), 'OLD_GROWTH_BIRCH': (.6,.6),

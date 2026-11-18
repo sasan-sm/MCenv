@@ -122,7 +122,7 @@ def biome_color(p, kind):
     grass = kind == 'GRASS'
     image = p.grass_colormap if grass else p.foliage_colormap
     # Swamps, badlands and cherry groves override the climate colormap.
-    hardcoded = p.biome in {'SWAMP','MANGROVE','BADLANDS','CHERRY_GROVE','PALE_GARDEN'}
+    hardcoded = p.biome in {'SWAMP','MANGROVE','BADLANDS','CHERRY_GROVE','PALE_GARDEN','DAPPLED_FOREST'}
     if image and image.has_data and image.channels >= 3 and not hardcoded:
         temp,rain = CLIMATE.get(p.biome, (.8,.4))
         temp=max(0,min(1,temp)); rain=max(0,min(1,rain))*temp
