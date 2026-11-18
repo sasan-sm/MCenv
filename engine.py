@@ -7,7 +7,8 @@ import colorsys
 import bpy
 from mathutils import Vector
 from bpy.app.handlers import persistent
-from .properties import BIOMES, CLIMATE, rgb, linear
+from .properties import BIOMES, CLIMATE, DRY_FOLIAGE, rgb, linear
+from . import assets
 
 _BUSY = set()
 _ERRORS = {}
@@ -115,14 +116,16 @@ def biome_color(p, kind):
         return tuple(getattr(p, kind.lower()+'_color'))
     b=BIOMES.get(p.biome, BIOMES['PLAINS'])
     if kind == 'WATER': return rgb(b[3])
-    # These Java leaf species keep their own tint across biome changes.
+    # Only spruce and birch keep fixed Java tints. Mangrove's #92c648
+    # inventory tint is not its placed-block biome tint.
     if kind == 'SPRUCE': return rgb('619961')
     if kind == 'BIRCH': return rgb('80a755')
-    if kind == 'MANGROVE': return rgb('92c648')
     grass = kind == 'GRASS'
-    image = p.grass_colormap if grass else p.foliage_colormap
-    # Swamps, badlands and cherry groves override the climate colormap.
-    hardcoded = p.biome in {'SWAMP','MANGROVE','BADLANDS','CHERRY_GROVE','PALE_GARDEN','DAPPLED_FOREST'}
+    dry = kind == 'DRY_FOLIAGE'
+    image = p.dry_foliage_colormap if dry else p.grass_colormap if grass else p.foliage_colormap
+    # Dry foliage has its own overrides, not the green foliage overrides.
+    hardcoded = p.biome in ({'SWAMP','MANGROVE','BADLANDS','DARK_FOREST','PALE_GARDEN','DAPPLED_FOREST'} if dry else
+                           {'SWAMP','MANGROVE','BADLANDS','CHERRY_GROVE','PALE_GARDEN','DAPPLED_FOREST'})
     if image and image.has_data and image.channels >= 3 and not hardcoded:
         temp,rain = CLIMATE.get(p.biome, (.8,.4))
         temp=max(0,min(1,temp)); rain=max(0,min(1,rain))*temp
@@ -140,6 +143,7 @@ def biome_color(p, kind):
             def srgb(v): return 12.92*v if v<=.0031308 else 1.055*v**(1/2.4)-.055
             c=tuple(linear((srgb(v)+int('28340a'[i*2:i*2+2],16)/255)/2) for i,v in enumerate(c))
         return c
+    if dry: return rgb(DRY_FOLIAGE.get(p.biome, 'a37546'))
     return rgb(b[1] if grass else b[2])
 
 
@@ -180,7 +184,6 @@ def world_setup(scene):
         link(t,coords,'Normal',rot,'Vector')
         # Custom images are camera-only, keeping ambient under independent control.
         image=node(t,'ShaderNodeTexImage','Flat image',interpolation='Closest')
-        link(t,coords,'Window',image,'Vector')
         box=node(t,'ShaderNodeTexImage','Box image',projection='BOX',interpolation='Closest')
         link(t,rot,0,box,'Vector')
         env=node(t,'ShaderNodeTexEnvironment','Panorama',interpolation='Linear')
@@ -237,25 +240,6 @@ def emission_mat(scene, role):
     return m
 
 
-def moon_image(scene):
-    p=scene.mc_env
-    name='MCenv '+p.owner_id+' Moon phase'
-    im=bpy.data.images.get(name)
-    if im is None: im=bpy.data.images.new(name,32,32,alpha=True)
-    if im.get('phase') != p.moon_phase:
-        phase=int(p.moon_phase); pixels=[]
-        for y in range(32):
-            for x in range(32):
-                u=(x+.5)/16-1; v=(y+.5)/16-1
-                # Pixelated circular lunar disk with a geometric terminator.
-                radius=math.sqrt(max(0,1-v*v))
-                light=(u*u+v*v<.92 and (u <= math.cos(phase*math.pi/4)*radius if phase<=4 else u >= -math.cos(phase*math.pi/4)*radius))
-                val=.8 if ((x//4+y//4)%3) else .57
-                pixels.extend((val,val,val,1 if light else 0))
-        im.pixels.foreach_set(pixels); im.update(); im['phase']=p.moon_phase
-    return im
-
-
 def celestial(scene, role, direction, scale, tint, image, tilt):
     o=object_for(scene,role)
     if not o.data.vertices:
@@ -280,6 +264,17 @@ def celestial(scene, role, direction, scale, tint, image, tilt):
     alpha.inputs[0].default_value=1
     if image:
         link(t,tex,'Color',em,0); link(t,tex,'Alpha',alpha,0)
+    # Bundled vanilla sprites use black RGB backgrounds. Additive emission
+    # makes black transparent without cutting off the soft pixel glow. Custom
+    # RGBA images keep the ordinary alpha path and are never modified.
+    additive=t.nodes.get('Additive sprite')
+    if image and image.get('mcenv_additive'):
+        if additive is None:
+            additive=node(t,'ShaderNodeAddShader','Additive sprite')
+            link(t,t.nodes['Transparent'],0,additive,0); link(t,em,0,additive,1)
+        link(t,additive,0,t.nodes['Output'],'Surface')
+    else:
+        link(t,alpha,0,t.nodes['Output'],'Surface')
 
 
 def stars_setup(scene, night):
@@ -444,9 +439,7 @@ def fog_setup(scene, sky):
         t.nodes.clear()
         out=node(t,'ShaderNodeOutputMaterial','Output')
         vol=node(t,'ShaderNodeVolumePrincipled','Volume'); link(t,vol,0,out,'Volume')
-        geo=node(t,'ShaderNodeTexCoord','Coordinates')
         dist=node(t,'ShaderNodeVectorMath','Camera distance',operation='DISTANCE')
-        link(t,geo,'Position' if 'Position' in geo.outputs else 'Object',dist,0)
         # Geometry Position is world space, unlike object/generated coordinates.
         pos=node(t,'ShaderNodeNewGeometry','World position'); link(t,pos,'Position',dist,0)
         subtract=math_node(t,'Start','SUBTRACT'); link(t,dist,'Value',subtract,0)
@@ -499,8 +492,8 @@ def sync(scene):
         for role,d,energy,c in [('Sunlight',direction,p.sun_strength*daylight,mix(p.day_sunlight,rgb('ffad66'),twilight*.65)),('Moonlight',-direction,p.night_strength*night,rgb('a9c2ff'))]:
             o=object_for(scene,role,'SUN'); o.rotation_euler=(-d).to_track_quat('-Z','Y').to_euler()
             o.data.energy=energy; o.data.color=c; o.data.angle=math.radians(p.sun_angle)
-        celestial(scene,'Sun',direction,p.sun_scale,p.day_sunlight,p.sun_image,p.sun_tilt)
-        celestial(scene,'Moon',-direction,p.moon_scale,rgb('dce7ff'),p.moon_image or moon_image(scene),p.moon_tilt)
+        celestial(scene,'Sun',direction,p.sun_scale,p.day_sunlight,assets.sun_image(p),p.sun_tilt)
+        celestial(scene,'Moon',-direction,p.moon_scale,rgb('dce7ff'),assets.moon_image(p),p.moon_tilt)
         stars_setup(scene,star_night)
         ground_setup(scene)
         clouds_setup(scene,sec,mix(p.night_clouds,p.day_clouds,daylight))
