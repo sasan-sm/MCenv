@@ -90,6 +90,10 @@ for _key in BIOMES:
 BIOME_ITEMS = [(key,value[0],'',0,_BIOME_IDS[key]) for key,value in BIOMES.items()]
 
 
+TEXTURE_SETS = [('MAIN','Main','Bundled main textures (default)'),
+                ('BB','BB','Bundled alternative textures')]
+
+
 def update(self, context):
     from .engine import sync
     scene = self.id_data
@@ -131,6 +135,9 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     material_bindings: CollectionProperty(type=MCENV_MaterialBinding)
     biome_scope: EnumProperty(name='Apply to', items=[('SCENE','Entire imported scene','All editable meshes in this scene'),('SELECTED','Selected objects','Only selected editable meshes')], default='SCENE')
     biome_texture_mode: EnumProperty(name='Texture colors', items=[('AUTO','Auto','Reuse active MCprep tint; compensate baked colors when possible'),('GRAYSCALE','Grayscale','Multiply untinted grayscale textures'),('COLORED','Already colored','Compensate estimated baked texture color')], default='AUTO')
+    block_texture_set: EnumProperty(name='Block textures', items=TEXTURE_SETS, default='MAIN', update=update)
+    sun_texture_set: EnumProperty(name='Sun textures', items=TEXTURE_SETS + [('BB_CELESTIAL','BB Celestial','Alternative bb/celestial/sun.png')], default='MAIN', update=update)
+    moon_texture_set: EnumProperty(name='Moon textures', items=TEXTURE_SETS, default='MAIN', update=update)
     grass_side_overlay: PointerProperty(name='Grass side overlay', type=bpy.types.Image, description='Optional RGBA grass_block_side_overlay.png; empty uses the bundled default. Uses the side diffuse UVs, not a normal map', update=update)
     biome_atmosphere: BoolProperty(name='Biome sky color', description='Use a temperature-based Minecraft-style daytime sky without overwriting day/night colors', default=False, update=update)
     grass_colormap: PointerProperty(name='Grass colormap', type=bpy.types.Image, description='Optional resource-pack textures/colormap/grass.png', update=update)
