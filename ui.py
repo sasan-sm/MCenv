@@ -96,6 +96,13 @@ class MCENV_PT_environment(bpy.types.Panel):
         if p.biome=='CUSTOM': color_grid(box,p,BIOME_FIELDS)
         else: box.operator('mcenv.custom_biome',icon='COLOR')
         box.prop(p,'biome_scope'); box.prop(p,'biome_texture_mode')
+        field(box,p,'grass_side_overlay')
+        if not p.grass_side_overlay:
+            box.label(text='Default: bundled grass_block_side_overlay.png',icon='TEXTURE')
+        elif not p.grass_side_overlay.size[0] or p.grass_side_overlay.channels != 4:
+            warning=box.row(); warning.alert=True
+            warning.label(text='Choose an RGBA image with transparency.',icon='ERROR')
+        box.label(text='RGBA color overlay; dirt and normal maps stay unchanged.')
         box.operator('mcenv.detect_biome',icon='MATERIAL')
         box.operator('mcenv.restore_biome',icon='LOOP_BACK')
         box.label(text='Run after MCprep > Prep Materials.',icon='INFO')

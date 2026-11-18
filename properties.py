@@ -12,7 +12,7 @@ def rgb(hexcode):
     return tuple(linear(int(hexcode[i:i+2], 16) / 255) for i in (0, 2, 4))
 
 
-# Java-style fallback tint values. No Minecraft textures are redistributed.
+# Java-style fallback tint values; the supplied side overlay is bundled separately.
 # Resource-pack colormaps, when supplied, are sampled by temperature/rainfall.
 BIOMES = {
     'PLAINS': ('Plains', '91bd59', '77ab2f', '3f76e4'),
@@ -128,6 +128,7 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     material_bindings: CollectionProperty(type=MCENV_MaterialBinding)
     biome_scope: EnumProperty(name='Apply to', items=[('SCENE','Entire imported scene','All editable meshes in this scene'),('SELECTED','Selected objects','Only selected editable meshes')], default='SCENE')
     biome_texture_mode: EnumProperty(name='Texture colors', items=[('AUTO','Auto','Reuse active MCprep tint; compensate baked colors when possible'),('GRAYSCALE','Grayscale','Multiply untinted grayscale textures'),('COLORED','Already colored','Compensate estimated baked texture color')], default='AUTO')
+    grass_side_overlay: PointerProperty(name='Grass side overlay', type=bpy.types.Image, description='Optional RGBA grass_block_side_overlay.png; empty uses the bundled default. Uses the side diffuse UVs, not a normal map', update=update)
     biome_atmosphere: BoolProperty(name='Biome sky color', description='Use a temperature-based Minecraft-style daytime sky without overwriting day/night colors', default=False, update=update)
     grass_colormap: PointerProperty(name='Grass colormap', type=bpy.types.Image, description='Optional resource-pack textures/colormap/grass.png', update=update)
     foliage_colormap: PointerProperty(name='Foliage colormap', type=bpy.types.Image, description='Optional resource-pack textures/colormap/foliage.png', update=update)
@@ -216,7 +217,7 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     texture_fps: FloatProperty(name='Texture animation speed', description='FPS for opted-in vertical-strip image textures; does not change scene FPS', default=20, min=0, soft_max=60, update=update)
     preview_day_cycle: BoolProperty(name='Animate day cycle', default=False, update=update)
     cycle_frames: IntProperty(name='Frames per day', default=2400, min=24, update=update)
-    tint_kind: EnumProperty(name='Tint kind', options=set(), items=[(x,x.replace('_',' ').title(),'') for x in ['GRASS','FOLIAGE','WATER','OAK','SPRUCE','BIRCH','JUNGLE','ACACIA','DARK_OAK','MANGROVE']])
+    tint_kind: EnumProperty(name='Tint kind', options=set(), items=[(x,x.replace('_',' ').title(),'') for x in ['GRASS','FOLIAGE','WATER','OAK','SPRUCE','BIRCH','JUNGLE','ACACIA','DARK_OAK','MANGROVE','GRASS_SIDE']])
     fold_sun: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_sky: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_cloud: BoolProperty(default=False, options={'SKIP_SAVE'})

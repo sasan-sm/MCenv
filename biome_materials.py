@@ -2,10 +2,12 @@
 """Non-destructive, scene-scoped biome binding for MCprep-prepared materials.
 
 MCprep compatibility is based on its MCPREP_saturate/MCPREP_diffuse metadata
-and Add Color multiply stage (materials/generate.py). No MCprep dependency or
-external textures are required. Nested shader groups and mixed texture atlases
-are intentionally not guessed: use a separate material or a manual binding.
+and Add Color multiply stage (materials/generate.py). No MCprep installation
+is required to use this module. A bundled RGBA overlay handles grass sides.
+Nested shader groups and mixed texture atlases are intentionally not guessed:
+use separate, per-block materials with local 0..1 UVs.
 """
+import os
 import re
 import sys
 import bpy
@@ -69,7 +71,7 @@ def diffuse_images(material):
     if not material.use_nodes: return []
     images = []
     for n in material.node_tree.nodes:
-        if n.type != 'TEX_IMAGE' or not n.image: continue
+        if n.type != 'TEX_IMAGE' or not n.image or n.get('mcenv_side_overlay'): continue
         label = (n.name+' '+n.label).lower()
         if flag(n, 'MCPREP_diffuse') or 'diffuse' in label or 'albedo' in label:
             images.append(n.image)
@@ -82,7 +84,7 @@ def diffuse_images(material):
                 if n.as_pointer() in seen: continue
                 seen.add(n.as_pointer())
                 if n.type == 'TEX_IMAGE' and n.image:
-                    images.append(n.image)
+                    if not n.get('mcenv_side_overlay'): images.append(n.image)
                 elif n.type != 'GROUP':
                     for inp in n.inputs:
                         if inp.is_linked: visit(inp)
@@ -96,7 +98,7 @@ def classify(material):
     # Original colored leaves, moss, sugar cane, flowers and lily pads are not
     # biome-tinted in Java; conservative exact matches avoid false positives.
     images = diffuse_images(material)
-    image_kinds = {classify_name(im.name) for im in images}
+    image_kinds = {classify_name(im.name) or classify_name(im.filepath) for im in images}
     image_kinds.discard(None)
     kind = classify_name(material.get('mcenv_source_name', material.name))
     if len(images) > 1: return None
@@ -155,36 +157,131 @@ def tint_value(settings, n):
     return tuple(color[i]/max(.04, base[i]) for i in range(3))+(1,)
 
 
+def side_overlay_image(settings):
+    """Load once, pack the supplied default so saved blends are portable."""
+    if settings.grass_side_overlay:
+        image = settings.grass_side_overlay
+        return image if image.size[0] and image.channels == 4 else None
+    for image in bpy.data.images:
+        if image.get('mcenv_builtin_side_overlay'):
+            return image
+    path = os.path.join(os.path.dirname(__file__), 'textures',
+                        'grass_block_side_overlay.png')
+    image = bpy.data.images.load(path, check_existing=True)
+    image['mcenv_builtin_side_overlay'] = True
+    image.alpha_mode = 'STRAIGHT'
+    image.pack()
+    return image
+
+
 def refresh(material, settings):
     if not material or not material.use_nodes: return
     for n in material.node_tree.nodes:
+        if n.get('mcenv_side_overlay'):
+            image = side_overlay_image(settings)
+            if image is not None and n.image != image:
+                n.image = image
         sockets = mix_sockets(n) if n.get('mcenv_tint') else None
         if sockets:
             sockets[2].default_value = tint_value(settings, n)
 
 
-def green_mask(tree, source):
-    """Restrict baked grass-side recoloring to green pixels; keep dirt brown."""
-    sep = tree.nodes.new('ShaderNodeSeparateRGB')
-    sep.label = 'MCenv grass-side mask (dirt preserved)'
-    tree.links.new(source, sep.inputs[0])
-    tests = []
-    for channel in ('R', 'B'):
-        scale = tree.nodes.new('ShaderNodeMath'); scale.operation = 'MULTIPLY'
-        scale.inputs[1].default_value = 1.07
-        tree.links.new(sep.outputs[channel], scale.inputs[0])
-        test = tree.nodes.new('ShaderNodeMath'); test.operation = 'GREATER_THAN'
-        tree.links.new(sep.outputs['G'], test.inputs[0])
-        tree.links.new(scale.outputs[0], test.inputs[1]); tests.append(test)
-    mask = tree.nodes.new('ShaderNodeMath'); mask.operation = 'MULTIPLY'
-    for i, test in enumerate(tests): tree.links.new(test.outputs[0], mask.inputs[i])
-    return mask.outputs[0]
+def prepare_side(material, settings):
+    """RGBA color layer over the original side, never a normal-map replacement.
+
+    Intercept diffuse color links on surface-color paths only. Alpha, normal,
+    bump, roughness and other texture branches stay connected as before.
+    """
+    tree = material.node_tree
+    if material.get('mcenv_side_version') == 2 and any(
+            n.get('mcenv_side_overlay') for n in tree.nodes):
+        refresh(material, settings)
+        return True
+    images = diffuse_images(material)
+    if len(images) != 1:
+        return False
+    sources = [n for n in tree.nodes if n.type == 'TEX_IMAGE'
+               and n.image == images[0] and not n.get('mcenv_side_overlay')]
+    # A strip/atlas cannot use a standalone overlay without a UV tile mapping.
+    if len(sources) != 1 or not images[0].size[0] or images[0].size[0] != images[0].size[1]:
+        return False
+    source = sources[0]
+    if source.projection != 'FLAT':
+        return False
+    seen, destinations = set(), []
+
+    def visit(socket):
+        for edge in list(socket.links):
+            node = edge.from_node
+            if node == source and edge.from_socket == source.outputs['Color']:
+                destinations.append(edge.to_socket)
+                continue
+            if node.as_pointer() in seen:
+                continue
+            seen.add(node.as_pointer())
+            if node.type not in {'GROUP', 'TEX_IMAGE'}:
+                for inp in node.inputs:
+                    if inp.is_linked:
+                        visit(inp)
+
+    for node in tree.nodes:
+        socket = surface_color(node)
+        if socket is not None and any(out.is_linked for out in node.outputs):
+            visit(socket)
+    if not destinations:
+        return False
+    image = side_overlay_image(settings)
+    if image is None or not image.size[0] or image.channels != 4:
+        return False
+    # The entire dirt/grass composite must not receive MCprep's old multiplier.
+    for node in tree.nodes:
+        sockets = mix_sockets(node)
+        if sockets and node.blend_type == 'MULTIPLY' and (
+                flag(node, 'MCPREP_saturate') or node.name == 'Add Color'):
+            node.mute = True
+    overlay = tree.nodes.new('ShaderNodeTexImage')
+    overlay.name = 'MCenv Grass Side Overlay'
+    overlay.label = 'MCenv RGBA grass overlay (same UV as side)'
+    overlay['mcenv_side_overlay'] = True
+    overlay.image = image
+    overlay.interpolation = 'Closest'
+    overlay.extension = source.extension
+    overlay.location = (source.location.x, source.location.y - 320)
+    if source.inputs['Vector'].is_linked:
+        tree.links.new(source.inputs['Vector'].links[0].from_socket, overlay.inputs['Vector'])
+    else:
+        overlay.inputs['Vector'].default_value = source.inputs['Vector'].default_value[:]
+    tint = tree.nodes.new('ShaderNodeMixRGB')
+    tint.name = 'MCenv Side Biome Tint'
+    tint.label = 'MCenv grass tint (overlay only)'
+    tint.blend_type = 'MULTIPLY'
+    tint.inputs[0].default_value = 1
+    tint.use_clamp = False
+    tint['mcenv_tint'] = 'GRASS'
+    tint['mcenv_baseline'] = (1., 1., 1.)
+    tint.location = (source.location.x + 250, source.location.y - 320)
+    tree.links.new(overlay.outputs['Color'], tint.inputs[1])
+    composite = tree.nodes.new('ShaderNodeMixRGB')
+    composite.name = 'MCenv Side Alpha Composite'
+    composite.label = 'MCenv tinted grass over original dirt'
+    composite.blend_type = 'MIX'
+    composite.location = (source.location.x + 480, source.location.y)
+    tree.links.new(overlay.outputs['Alpha'], composite.inputs[0])
+    tree.links.new(source.outputs['Color'], composite.inputs[1])
+    tree.links.new(tint.outputs[0], composite.inputs[2])
+    for destination in destinations:
+        tree.links.new(composite.outputs[0], destination)
+    material['mcenv_side_version'] = 2
+    refresh(material, settings)
+    return True
 
 
 def prepare(material, settings, kind):
     """Only edits an owned copy. Returns False for unsupported shader layouts."""
     if not material.use_nodes: return False
     tree = material.node_tree
+    if kind == 'GRASS_SIDE':
+        return prepare_side(material, settings)
     # Migrate manual tint nodes from 1.0.0.x before re-adopting MCprep's
     # original tint stage. Otherwise old multiply-on-multiply darkening survives.
     for n in list(tree.nodes):
@@ -199,7 +296,7 @@ def prepare(material, settings, kind):
         tree.nodes.remove(n)
     existing = [n for n in tree.nodes if n.get('mcenv_tint')]
     if existing:
-        for n in existing: n['mcenv_tint'] = 'GRASS' if kind == 'GRASS_SIDE' else kind
+        for n in existing: n['mcenv_tint'] = kind
         refresh(material, settings)
         return True
     targets = [surface_color(n) for n in tree.nodes if surface_color(n) is not None
@@ -209,16 +306,13 @@ def prepare(material, settings, kind):
     image = images[0] if len(images) == 1 else None
     mode = settings.biome_texture_mode
     baseline, colored = image_baseline(image, kind != 'WATER' and mode != 'COLORED')
-    if kind == 'GRASS_SIDE' and not colored:
-        # A grayscale composite/atlas cannot be separated safely by color.
-        return False
     # Replace MCprep's active grayscale tint in place. This preserves its
     # animation, alpha, normals, roughness and every downstream shader branch.
     stages = [n for n in tree.nodes if mix_sockets(n) and
               (flag(n, 'MCPREP_saturate') or n.name == 'Add Color') and
               n.blend_type == 'MULTIPLY' and not n.mute and
               not mix_sockets(n)[2].is_linked and mix_sockets(n)[3].is_linked]
-    if stages and kind != 'GRASS_SIDE':
+    if stages:
         for n in stages:
             n['mcenv_tint'] = kind
             n['mcenv_baseline'] = (1., 1., 1.)
@@ -233,13 +327,11 @@ def prepare(material, settings, kind):
         n.name = 'MCenv Biome tint'; n.label = 'MCenv '+kind.replace('_', ' ').title()
         n.blend_type = 'MULTIPLY'; n.inputs[0].default_value = 1
         n.use_clamp = False
-        n['mcenv_tint'] = 'GRASS' if kind == 'GRASS_SIDE' else kind
+        n['mcenv_tint'] = kind
         n['mcenv_baseline'] = baseline
         n.location = (socket.node.location.x-230, socket.node.location.y+150)
         if source:
             tree.links.new(source, n.inputs[1])
-            if kind == 'GRASS_SIDE':
-                tree.links.new(green_mask(tree, source), n.inputs[0])
         else:
             n.inputs[1].default_value = socket.default_value[:]
         tree.links.new(n.outputs[0], socket)
@@ -288,7 +380,8 @@ def bind(scene, objects, manual_kind=None):
             record = settings.material_bindings[record_index] if record_index is not None else None
             if record and old == record.bound and old.get('mcenv_biome_owner') == token:
                 # Re-running MCprep Prep Materials may replace this copy's nodes.
-                if old.get('mcenv_kind') == kind and old.get('mcenv_mode') == settings.biome_texture_mode:
+                if (old.get('mcenv_kind') == kind and old.get('mcenv_mode') == settings.biome_texture_mode
+                        and (kind != 'GRASS_SIDE' or old.get('mcenv_side_version') == 2)):
                     if prepare(old, settings, kind):
                         counts['slots'] += 1
                     else: counts['unsupported'] += 1

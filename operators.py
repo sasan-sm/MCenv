@@ -121,6 +121,11 @@ class MCENV_OT_image(bpy.types.Operator,ImportHelper):
         if self.property_name not in allowed: return {'CANCELLED'}
         try:
             image=bpy.data.images.load(self.filepath,check_existing=True)
+            if self.property_name == 'grass_side_overlay':
+                if not image.size[0] or image.channels != 4:
+                    self.report({'ERROR'},'Grass side overlay must be an RGBA image with transparency (PNG recommended)')
+                    return {'CANCELLED'}
+                image.pack()
             setattr(context.scene.mc_env,self.property_name,image)
         except Exception as exc:
             self.report({'ERROR'},str(exc)); return {'CANCELLED'}
