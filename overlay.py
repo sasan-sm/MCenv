@@ -1,14 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Circular Time/Rotation dial for the Quick Favorites (Q) menu.
+"""Independent Time/Rotation dials, invoked by panel buttons, F3 or user favorites.
 
-Blender's Python UI API cannot draw custom widgets inside a Properties panel,
-so the dial lives on a POST_PIXEL overlay of whichever editor it was invoked
-from (normally the 3D Viewport via the Q menu). Interaction follows the
-mc-env dial: the dial opens under the mouse, the value follows mouse movement,
-click confirms, clicking the center opens the precise-entry popup, scrolling
-steps finely and Esc cancels. The visual base keeps the MCenv overlay look:
-larger ring, brighter ring line, tick marks, red pointer line and the fainter
-20%-opacity backdrop so the editor/scene stays clearly visible behind it.
+Only the current editor/region receives the modal drawing. Blender's native
+property fields/decorators handle keyframes; this module owns no animation UI.
 """
 import math
 import bpy
@@ -18,292 +12,283 @@ from bpy.props import StringProperty
 from gpu_extras.batch import batch_for_shader
 from .ui import field
 
-TEXT=(.78,.78,.78,1)
-BRIGHT=(.92,.92,.92,1)
-MUTED=(.50,.50,.50,1)
-BG=(.015,.018,.025,.20)   # MCenv backdrop: fainter than mc-env, scene stays visible
-SOLID=(.08,.08,.08,.85)   # small backdrops for knob and marker, kept readable
-RING=(.8,.82,.85,.9)      # MCenv ring: brighter line
-TICK=(.7,.72,.76,.7)      # MCenv tick marks around the ring
-POINTER=(1,.18,.36,.45)   # MCenv red pointer line
-KNOB=(.65,.65,.65,1)
+TEXT = (.91, .94, .95, 1)
+MUTED = (.65, .73, .76, 1)
+BACKDROP = (.025, .035, .045, .46)
+BADGE = (.035, .048, .06, 1)
+OUTLINE = (.008, .012, .018, 1)
+RING = (.72, .81, .83, 1)
+ACCENT = (.62, .87, .70, 1)
+SUN = (1, .78, .30, 1)
+MOON = (.78, .88, 1, 1)
+VALID = ('time', 'rotation')
+CENTER_PICK_RADIUS = 30.0
+_ACTIVE_DIALS = set()
 
-VALID=('time','rotation')
-CENTER_PICK_RADIUS=20.0
-
-# Editors the dial can be drawn over, resolved lazily at invoke time.
-_SPACE_CLASSES=(('VIEW_3D','SpaceView3D'),('PROPERTIES','SpaceProperties'),
-                ('NODE_EDITOR','SpaceNodeEditor'),('IMAGE_EDITOR','SpaceImageEditor'),
-                ('SEQUENCE_EDITOR','SpaceSequenceEditor'),('GRAPH_EDITOR','SpaceGraphEditor'),
-                ('CLIP_EDITOR','SpaceClipEditor'),('OUTLINER','SpaceOutliner'),
-                ('TOPBAR','SpaceTopbar'),('INFO','SpaceInfo'),('TEXT_EDITOR','SpaceTextEditor'),
-                ('SPREADSHEET','SpaceSpreadsheet'),('FILE_BROWSER','SpaceFileBrowser'))
-
-
-def shape(shader,mode,vertices,color):
-    shader.bind(); shader.uniform_float('color',color)
-    batch_for_shader(shader,mode,{'pos':vertices}).draw(shader)
+_SPACE_CLASSES = (('VIEW_3D','SpaceView3D'), ('PROPERTIES','SpaceProperties'),
+                  ('NODE_EDITOR','SpaceNodeEditor'), ('IMAGE_EDITOR','SpaceImageEditor'),
+                  ('SEQUENCE_EDITOR','SpaceSequenceEditor'), ('GRAPH_EDITOR','SpaceGraphEditor'),
+                  ('CLIP_EDITOR','SpaceClipEditor'), ('OUTLINER','SpaceOutliner'),
+                  ('TOPBAR','SpaceTopbar'), ('INFO','SpaceInfo'), ('TEXT_EDITOR','SpaceTextEditor'),
+                  ('SPREADSHEET','SpaceSpreadsheet'), ('FILE_BROWSER','SpaceFileBrowser'))
 
 
-def rect(shader,x,y,w,h,c):
-    shape(shader,'TRIS',[(x,y),(x+w,y),(x+w,y+h),(x,y),(x+w,y+h),(x,y+h)],c)
+def shape(shader, mode, vertices, color):
+    if not vertices: return
+    shader.bind()
+    shader.uniform_float('color', color)
+    batch_for_shader(shader, mode, {'pos': vertices}).draw(shader)
 
 
-def text(x,y,value,size=12,color=TEXT,center=False):
-    blf.size(0,size); blf.color(0,*color)
-    w=blf.dimensions(0,str(value))[0]
-    blf.position(0,x-(w/2 if center else 0),y,0); blf.draw(0,str(value))
+def rect(shader, x, y, w, h, color):
+    shape(shader, 'TRIS', [(x,y),(x+w,y),(x+w,y+h),(x,y),(x+w,y+h),(x,y+h)], color)
 
 
-def caption(p,key):
-    if key=='time':
-        minutes=round(p.time*60)%1440
+def disc(shader, x, y, radius, color):
+    vertices = []
+    for i in range(64):
+        a = i*math.tau/64; b = (i+1)*math.tau/64
+        vertices.extend(((x,y), (x+math.cos(a)*radius,y+math.sin(a)*radius),
+                         (x+math.cos(b)*radius,y+math.sin(b)*radius)))
+    shape(shader, 'TRIS', vertices, color)
+
+
+def text(x, y, value, size=12, color=TEXT, center=False, bold=False):
+    value = str(value)
+    blf.size(0, size)
+    width = blf.dimensions(0, value)[0]
+    left = x-width/2 if center else x
+    # A dark keyline remains readable over white snow and a light foreground
+    # remains readable over black. Slight overstrike gives the system font weight.
+    for dx, dy in ((-1,-1),(-1,1),(1,-1),(1,1),(0,-2)):
+        blf.color(0, *OUTLINE)
+        blf.position(0, left+dx, y+dy, 0); blf.draw(0, value)
+    blf.color(0, *color)
+    for dx in ((0,.65) if bold else (0,)):
+        blf.position(0, left+dx, y, 0); blf.draw(0, value)
+
+
+def caption(p, key):
+    if key == 'time':
+        minutes = round(p.time*60) % 1440
         return f'{minutes//60}:{minutes%60:02d}'
     return f'{p.rotation:.0f}°'
 
 
+def pixel_icon(shader, x, y, scale, moon=False):
+    # Original pixel-art glyphs; only the glyph is square, never its backdrop.
+    pattern = ('  XXX  ', ' XX    ', 'XX     ', 'XX     ', 'XX   X ', ' XXXXX ', '  XXX  ') if moon else (
+              '   X   ', ' X   X ', '  XXX  ', 'X XXX X', '  XXX  ', ' X   X ', '   X   ')
+    unit = 2*scale
+    for row, line in enumerate(pattern):
+        for column, pixel in enumerate(line):
+            if pixel == 'X':
+                rect(shader, x+(column-3.5)*unit, y+(2.5-row)*unit, unit, unit, MOON if moon else SUN)
+
+
 def _space_class(area):
-    for kind,name in _SPACE_CLASSES:
-        if area.type==kind: return getattr(bpy.types,name,None)
-    return None
+    return next((getattr(bpy.types, name, None) for kind,name in _SPACE_CLASSES if area.type == kind), None)
 
 
 class MCENV_OT_edit(bpy.types.Operator):
-    bl_idname='mcenv.edit_field'
-    bl_label='Environment Setting'
-    bl_options={'INTERNAL','UNDO'}
+    bl_idname = 'mcenv.edit_field'
+    bl_label = 'Environment Setting'
+    bl_options = {'INTERNAL', 'UNDO'}
     property_name: StringProperty()
 
-    def draw(self,context):
-        if self.property_name in context.scene.mc_env.bl_rna.properties:
-            field(self.layout,context.scene.mc_env,self.property_name)
-            self.layout.label(text='Right-click the field for keyframes.',icon='KEY_HLT')
+    def invoke(self, context, event):
+        if self.property_name not in VALID: return {'CANCELLED'}
+        self.initial = getattr(context.scene.mc_env, self.property_name)
+        return context.window_manager.invoke_props_dialog(self, width=280)
 
-    def execute(self,context): return {'FINISHED'}
+    def draw(self, context):
+        if self.property_name in VALID:
+            field(self.layout, context.scene.mc_env, self.property_name)
+
+    def execute(self, context): return {'FINISHED'}
+
+    def cancel(self, context):
+        setattr(context.scene.mc_env, self.property_name, self.initial)
 
 
 class DialMixin:
-    """Shared circular dial behavior; subclasses fix property_name or expose it."""
-    property_name=''
+    property_name = ''
 
     @classmethod
-    def poll(cls,context):
-        p=getattr(context.scene,'mc_env',None) if context.scene else None
+    def poll(cls, context):
+        p = getattr(context.scene, 'mc_env', None) if context.scene else None
         return p is not None and p.enabled and context.area is not None and context.window is not None
 
-    def invoke(self,context,event):
+    def invoke(self, context, event):
         if self.property_name not in VALID: return {'CANCELLED'}
-        self.scene=context.scene; self.window=context.window; self.area=context.area
-        # Always draw relative to the editor's own WINDOW region, even when the
-        # operator is invoked from a popup menu (Quick Favorites) with a temp region.
-        self.region=next((r for r in self.area.regions if r.type=='WINDOW'),None)
-        if self.region is None and context.region and context.region.type=='WINDOW':
-            self.region=context.region
+        self.scene = context.scene; self.window = context.window; self.area = context.area
+        self.region = next((r for r in self.area.regions if r.type == 'WINDOW'), None)
         if self.region is None: return {'CANCELLED'}
-        space_cls=_space_class(self.area)
-        if space_cls is None:
-            self.report({'INFO'},'The circular dial is not available in this editor; edit the value directly.')
-            bpy.ops.mcenv.edit_field('INVOKE_DEFAULT',property_name=self.property_name)
+        self.space_cls = _space_class(self.area)
+        if self.space_cls is None:
+            bpy.ops.mcenv.edit_field('INVOKE_DEFAULT', property_name=self.property_name)
             return {'CANCELLED'}
-        self.space_cls=space_cls
-        p=self.scene.mc_env
-        self.initial=getattr(p,self.property_name)
-        self.moved=False; self.seen_press=False
-        # MCenv dial sizing: a larger, UI-scale aware ring than the mc-env one.
-        self.scale=max(.75,min(1.75,context.preferences.system.ui_scale))
-        self.radius=min(76*self.scale,max(40,self.region.width/2-24))
-        self.center=(min(max(event.mouse_x-self.region.x,self.radius+10),self.region.width-self.radius-10),
-                     min(max(event.mouse_y-self.region.y,self.radius+34),self.region.height-self.radius-46))
-        self.shader=gpu.shader.from_builtin('UNIFORM_COLOR')
+        self.initial = getattr(self.scene.mc_env, self.property_name)
+        self.moved = False; self.seen_press = False
+        self.scale = max(.75, min(1.75, context.preferences.system.ui_scale))
+        self.radius = min(104*self.scale, max(24, (self.region.width-44*self.scale)/2),
+                          max(24, (self.region.height-112*self.scale)/2))
+        margin = self.radius+19*self.scale
+        def clamp_center(value, extent, lower, upper):
+            return max(0, min(extent, extent/2 if lower > upper else min(max(value,lower),upper)))
+        self.center = (clamp_center(event.mouse_x-self.region.x, self.region.width, margin, self.region.width-margin),
+                       clamp_center(event.mouse_y-self.region.y, self.region.height, margin+34*self.scale,
+                                    self.region.height-margin-34*self.scale))
+        self.shader = gpu.shader.from_builtin('UNIFORM_COLOR')
         try:
-            self.handle=space_cls.draw_handler_add(self.draw_dial,(),'WINDOW','POST_PIXEL')
-        except (AttributeError,RuntimeError):
-            self.handle=None
+            self.handle = self.space_cls.draw_handler_add(self.draw_dial, (), 'WINDOW', 'POST_PIXEL')
+        except (AttributeError, RuntimeError):
+            self.handle = None
         if self.handle is None:
-            self.report({'INFO'},'Circular dial unavailable in this Blender build; edit the value directly.')
-            bpy.ops.mcenv.edit_field('INVOKE_DEFAULT',property_name=self.property_name)
+            bpy.ops.mcenv.edit_field('INVOKE_DEFAULT', property_name=self.property_name)
             return {'CANCELLED'}
+        _ACTIVE_DIALS.add(self)
         context.window_manager.modal_handler_add(self)
         self.area.tag_redraw()
         return {'RUNNING_MODAL'}
 
-    def finish(self,context=None):
-        handle=getattr(self,'handle',None)
-        self.handle=None
+    def finish(self):
+        handle = getattr(self, 'handle', None)
+        self.handle = None
+        _ACTIVE_DIALS.discard(self)
         if handle:
-            try: getattr(self,'space_cls',bpy.types.SpaceView3D).draw_handler_remove(handle,'WINDOW')
-            except Exception: pass
+            try: self.space_cls.draw_handler_remove(handle, 'WINDOW')
+            except (ReferenceError, RuntimeError, ValueError): pass
         try: self.area.tag_redraw()
-        except Exception: pass
+        except ReferenceError: pass
 
-    def apply(self,value):
-        p=self.scene.mc_env
-        if self.property_name=='time': p.time=round((value%24)*60)/60
-        else: p.rotation=round(((value+180)%360)-180)
+    def cancel(self, context):
+        try: setattr(self.scene.mc_env, self.property_name, self.initial)
+        except ReferenceError: pass
+        self.finish()
 
-    def value_at(self,angle_deg):
-        # Matches the classic mc-env dial mapping: time 0h at the bottom, rotation 0° at the top.
-        if self.property_name=='time': return ((angle_deg+90)%360)/15
-        return angle_deg-90
+    def apply(self, value):
+        if self.property_name == 'time': value = (round((value % 24)*60)/60) % 24
+        else: value = (round(value)+180) % 360-180
+        setattr(self.scene.mc_env, self.property_name, value)
+
+    def value_at(self, angle_deg):
+        return ((angle_deg+90) % 360)/15 if self.property_name == 'time' else angle_deg-90
 
     def draw_dial(self):
-        if self.handle is None: return
+        if getattr(self, 'handle', None) is None: return
         try:
-            if bpy.context.area!=self.area: return
+            if bpy.context.area != self.area or bpy.context.region != self.region: return
+            p = self.scene.mc_env
         except ReferenceError: return
-        try:
-            p=self.scene.mc_env
-        except ReferenceError:
-            return
-        s=self.shader; cx,cy=self.center; R=self.radius
+        s = self.shader; cx,cy = self.center; radius = self.radius; scale = self.scale
+        value = getattr(p, self.property_name)
+        angle = value/24*math.tau-math.pi/2 if self.property_name == 'time' else math.radians(value)+math.pi/2
+        badge_radius = 15*scale
+        gap = math.asin(min(.9, (badge_radius+2*scale)/radius))
+        old_width = gpu.state.line_width_get()
+        old_blend = gpu.state.blend_get()
         gpu.state.blend_set('ALPHA')
         try:
-            # Faint disc plus the brighter MCenv ring line.
-            circle=[(cx+math.cos(i*math.tau/96)*R,cy+math.sin(i*math.tau/96)*R) for i in range(97)]
-            shape(s,'TRI_FAN',[(cx,cy)]+circle,BG)
-            shape(s,'LINE_STRIP',circle,RING)
-            # MCenv tick marks: 24 hours on the time dial, 12 on the rotation dial.
-            n=24 if self.property_name=='time' else 12
-            for i in range(n):
-                a=i*math.tau/n
-                shape(s,'LINES',[(cx+math.cos(a)*(R-5),cy+math.sin(a)*(R-5)),
-                                 (cx+math.cos(a)*R,cy+math.sin(a)*R)],TICK)
-            value=p.time if self.property_name=='time' else p.rotation
-            a=(value/24*math.tau-math.pi/2) if self.property_name=='time' else math.radians(value)+math.pi/2
-            hx=cx+math.cos(a)*R; hy=cy+math.sin(a)*R
-            # MCenv red pointer line leads from the center to the knob.
-            shape(s,'LINES',[(cx,cy),(hx,hy)],POINTER)
-            rect(s,hx-10,hy-10,20,20,SOLID)
-            for j in range(8):
-                aa=j*math.tau/8
-                shape(s,'LINES',[(hx+math.cos(aa)*6,hy+math.sin(aa)*6),(hx+math.cos(aa)*9,hy+math.sin(aa)*9)],KNOB)
-            ring=[(hx+math.cos(i*math.tau/20)*3,hy+math.sin(i*math.tau/20)*3) for i in range(21)]
-            shape(s,'LINE_STRIP',ring,KNOB)
-            # mc-env crescent marker on the opposite side of the ring.
-            mx=cx-math.cos(a)*R; my=cy-math.sin(a)*R
-            rect(s,mx-10,my-10,20,20,SOLID)
-            crescent=[(mx+math.cos(i*math.pi/20-math.pi/2)*7,my+math.sin(i*math.pi/20-math.pi/2)*7) for i in range(21)]
-            shape(s,'LINE_STRIP',crescent,MUTED)
-            inner=[(mx+math.cos(i*math.pi/20-math.pi/2)*4,my+math.sin(i*math.pi/20-math.pi/2)*5) for i in range(21)]
-            shape(s,'LINE_STRIP',inner,MUTED)
-            # Property-style captions above the ring, as requested.
-            text(cx,cy+R+17,'MCenv.'+self.property_name,size=round(13*self.scale),color=BRIGHT,center=True)
-            text(cx,cy+20,'Time' if self.property_name=='time' else 'Rotation',size=10,color=MUTED,center=True)
-            text(cx,cy-24,caption(p,self.property_name),size=17,color=BRIGHT,center=True)
-            text(cx,cy-R-18,'Click: confirm  •  Center: type value  •  Scroll: fine  •  Esc: cancel',size=10,color=MUTED,center=True)
-        finally: gpu.state.blend_set('NONE')
+            disc(s, cx, cy, radius+3*scale, BACKDROP)
+            # Real gaps around both badges: no ring or tick is drawn underneath.
+            def visible(a):
+                return all(abs((a-marker+math.pi) % math.tau-math.pi) > gap
+                           for marker in (angle, angle+math.pi))
+            ring = []
+            for i in range(192):
+                a = i*math.tau/192; b = (i+1)*math.tau/192
+                if visible(a) and visible(b):
+                    ring.extend(((cx+math.cos(a)*radius,cy+math.sin(a)*radius),
+                                 (cx+math.cos(b)*radius,cy+math.sin(b)*radius)))
+            gpu.state.line_width_set(4*scale); shape(s, 'LINES', ring, OUTLINE)
+            gpu.state.line_width_set(1.4*scale); shape(s, 'LINES', ring, RING)
+            count = 24 if self.property_name == 'time' else 12
+            for i in range(count):
+                a = i*math.tau/count
+                if not visible(a): continue
+                length = (9 if i % (count//4) == 0 else 4)*scale
+                points = [(cx+math.cos(a)*(radius-length),cy+math.sin(a)*(radius-length)),
+                          (cx+math.cos(a)*radius,cy+math.sin(a)*radius)]
+                gpu.state.line_width_set(3*scale); shape(s, 'LINES', points, OUTLINE)
+                gpu.state.line_width_set(1*scale); shape(s, 'LINES', points, ACCENT if length > 5*scale else MUTED)
+            for opposite in (False, True):
+                a = angle+(math.pi if opposite else 0)
+                x = cx+math.cos(a)*radius; y = cy+math.sin(a)*radius
+                disc(s, x, y, badge_radius+2*scale, OUTLINE)
+                disc(s, x, y, badge_radius+scale, MOON if opposite else SUN)
+                disc(s, x, y, badge_radius, BADGE)
+                pixel_icon(s, x, y, scale, moon=opposite)
+            text(cx, cy+radius+28*scale, 'MCENV / '+self.property_name.upper(),
+                 size=round(12*scale), color=ACCENT, center=True, bold=True)
+            text(cx, cy+12*scale, self.property_name.title(), size=round(18*scale), center=True, bold=True)
+            text(cx, cy-26*scale, caption(p, self.property_name), size=round(29*scale), center=True, bold=True)
+            text(cx, cy-radius-31*scale, 'Click: confirm   /   Center: type', size=round(10*scale), center=True)
+            text(cx, cy-radius-47*scale, 'Scroll: fine   /   Esc: cancel', size=round(10*scale), color=MUTED, center=True)
+        finally:
+            gpu.state.line_width_set(old_width)
+            gpu.state.blend_set(old_blend)
 
-    def modal(self,context,event):
-        if getattr(self,'handle',None) is None: return {'CANCELLED'}
+    def modal(self, context, event):
+        if getattr(self, 'handle', None) is None: return {'CANCELLED'}
         try:
-            valid=self.area in list(context.screen.areas) and self.window==context.window
+            valid = self.area in list(context.screen.areas) and self.window == context.window
         except ReferenceError:
-            self.finish(context); return {'CANCELLED'}
+            self.cancel(context); return {'CANCELLED'}
         if not valid:
-            self.finish(context); return {'CANCELLED'}
-        r=self.region
+            self.cancel(context); return {'CANCELLED'}
+        dx = event.mouse_x-self.region.x-self.center[0]
+        dy = event.mouse_y-self.region.y-self.center[1]
+        center_hit = math.hypot(dx,dy) < CENTER_PICK_RADIUS*self.scale
         if event.type in {'MOUSEMOVE','INBETWEEN_MOUSEMOVE'}:
-            dx=event.mouse_x-r.x-self.center[0]; dy=event.mouse_y-r.y-self.center[1]
-            if math.hypot(dx,dy)>4: self.moved=True
-            if self.moved:
-                try: self.apply(self.value_at(math.degrees(math.atan2(dy,dx))))
-                except ReferenceError: self.finish(context); return {'CANCELLED'}
+            if not center_hit:
+                self.apply(self.value_at(math.degrees(math.atan2(dy,dx))))
+                self.moved = True
             self.area.tag_redraw(); return {'RUNNING_MODAL'}
         if event.type in {'WHEELUPMOUSE','WHEELDOWNMOUSE'}:
-            try:
-                p=self.scene.mc_env
-                step=.25 if self.property_name=='time' else 1
-                self.apply(getattr(p,self.property_name)+(step if event.type=='WHEELUPMOUSE' else -step))
-            except ReferenceError:
-                self.finish(context); return {'CANCELLED'}
-            self.moved=True; self.area.tag_redraw(); return {'RUNNING_MODAL'}
-        if event.type=='LEFTMOUSE' and event.value=='PRESS':
-            self.seen_press=True; return {'RUNNING_MODAL'}
-        if event.type=='LEFTMOUSE' and event.value=='RELEASE':
-            if not self.seen_press:
-                # Tail release of the click that opened the dial; keep it open.
-                return {'RUNNING_MODAL'}
-            self.finish(context)
-            mx=event.mouse_x-r.x; my=event.mouse_y-r.y
-            if not self.moved and math.hypot(mx-self.center[0],my-self.center[1])<CENTER_PICK_RADIUS:
-                bpy.ops.mcenv.edit_field('INVOKE_DEFAULT',property_name=self.property_name)
-            elif self.moved:
-                bpy.ops.ed.undo_push(message='MCenv '+self.property_name)
+            step = 1/60 if self.property_name == 'time' else 1
+            self.apply(getattr(self.scene.mc_env,self.property_name)+(step if event.type == 'WHEELUPMOUSE' else -step))
+            self.moved = True; self.area.tag_redraw(); return {'RUNNING_MODAL'}
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            self.seen_press = True; return {'RUNNING_MODAL'}
+        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            if not self.seen_press: return {'RUNNING_MODAL'}
+            self.finish()
+            if self.moved: bpy.ops.ed.undo_push(message='MCenv '+self.property_name)
+            if center_hit: bpy.ops.mcenv.edit_field('INVOKE_DEFAULT', property_name=self.property_name)
+            return {'FINISHED'}
+        if event.type in {'RET','NUMPAD_ENTER'} and event.value == 'PRESS':
+            self.finish()
+            if self.moved: bpy.ops.ed.undo_push(message='MCenv '+self.property_name)
             return {'FINISHED'}
         if event.type in {'ESC','RIGHTMOUSE'}:
-            if self.moved:
-                self.apply(self.initial)
-                bpy.ops.ed.undo_push(message='MCenv dial cancel')
-            self.finish(context); return {'FINISHED'}
-        return {'PASS_THROUGH'}
+            self.cancel(context); return {'CANCELLED'}
+        return {'RUNNING_MODAL'}
 
 
-class MCENV_OT_dial(DialMixin,bpy.types.Operator):
-    bl_idname='mcenv.dial'
-    bl_label='MCenv Circular Dial'
-    bl_description='Move the mouse around the translucent dial to adjust, click to confirm, click the dial center to type a value, scroll for fine steps, Esc cancels; right-click this button to add it to Quick Favorites'
-    bl_options={'INTERNAL'}
-    property_name: StringProperty()
+class MCENV_OT_time_dial(DialMixin, bpy.types.Operator):
+    bl_idname = 'mcenv.time_dial'
+    bl_label = 'MCenv Time'
+    bl_description = 'Open the Time dial; right-click this button to add it to Quick Favorites'
+    bl_options = {'REGISTER'}
+    property_name = 'time'
 
 
-class MCENV_OT_time_dial(DialMixin,bpy.types.Operator):
-    bl_idname='mcenv.time_dial'
-    bl_label='MCenv Time'
-    bl_description='Open the translucent Time dial; right-click this button to add it to Quick Favorites'
-    bl_options={'REGISTER'}
-    property_name='time'
+class MCENV_OT_rotation_dial(DialMixin, bpy.types.Operator):
+    bl_idname = 'mcenv.rotation_dial'
+    bl_label = 'MCenv Rotation'
+    bl_description = 'Open the Rotation dial; right-click this button to add it to Quick Favorites'
+    bl_options = {'REGISTER'}
+    property_name = 'rotation'
 
 
-class MCENV_OT_rotation_dial(DialMixin,bpy.types.Operator):
-    bl_idname='mcenv.rotation_dial'
-    bl_label='MCenv Rotation'
-    bl_description='Open the translucent Rotation dial; right-click this button to add it to Quick Favorites'
-    bl_options={'REGISTER'}
-    property_name='rotation'
-
-
-def _quick_favorites_draw(menu,context):
-    p=getattr(context.scene,'mc_env',None) if context.scene else None
-    if p is None or not p.enabled: return
-    col=menu.layout.column(align=True)
-    col.label(text='MCenv',icon='WORLD')
-    # Labels are rebuilt on every menu draw, so the values shown here are always current.
-    minutes=round(p.time*60)%1440
-    op=col.operator('mcenv.dial',text=f'Time: {minutes//60}:{minutes%60:02d} (circular dial)',icon='TIME'); op.property_name='time'
-    op=col.operator('mcenv.dial',text=f'Rotation: {p.rotation:g}° (circular dial)',icon='DRIVER_ROTATIONAL_DIFFERENCE'); op.property_name='rotation'
-
-
-def _refresh_quick_favorites_labels():
-    """Quick Favorites freezes a button's text when the entry is added, so
-    favorites of the old value-carrying buttons keep showing Time: 9:00 style
-    labels forever. Best-effort rewrite of those labels to the static dial
-    names; harmless if the user-menu RNA is unavailable in this Blender build."""
-    fixed={'mcenv.time_dial':'Time','mcenv.rotation_dial':'Rotation'}
-    def rewrite(menus):
-        for menu in menus:
-            for item in getattr(menu,'items',[]):
-                op=getattr(item,'operator','')
-                label=getattr(item,'label','')
-                if op in fixed and (':' in label or '°' in label):
-                    item.label=fixed[op]
-    for source in (getattr(getattr(bpy.context,'preferences',None),'user_menus',None),
-                   getattr(getattr(bpy.context,'window_manager',None),'user_menus',None)):
-        if source is None: continue
-        try: rewrite(source)
-        except Exception: pass
-
-
-CLASSES=(MCENV_OT_edit,MCENV_OT_dial,MCENV_OT_time_dial,MCENV_OT_rotation_dial)
+CLASSES = (MCENV_OT_edit, MCENV_OT_time_dial, MCENV_OT_rotation_dial)
 
 
 def register():
     for cls in CLASSES: bpy.utils.register_class(cls)
-    try: bpy.types.SCREEN_MT_user_menu.append(_quick_favorites_draw)
-    except Exception: pass
-    _refresh_quick_favorites_labels()
 
 
 def unregister():
-    try: bpy.types.SCREEN_MT_user_menu.remove(_quick_favorites_draw)
-    except Exception: pass
+    for dial in tuple(_ACTIVE_DIALS): dial.cancel(bpy.context)
     for cls in reversed(CLASSES): bpy.utils.unregister_class(cls)
