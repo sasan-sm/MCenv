@@ -90,6 +90,24 @@ for _key in BIOMES:
 BIOME_ITEMS = [(key,value[0],'',0,_BIOME_IDS[key]) for key,value in BIOMES.items()]
 
 
+# Java dry_foliage.png samples / explicit overrides from Minecraft Wiki > Biome.
+# Keep separate from green foliage: leaf litter must not turn grass-green.
+DRY_FOLIAGE = {
+    'PLAINS':'a37546', 'FOREST':'a36d46', 'BIRCH_FOREST':'a37246',
+    'DARK_FOREST':'7b5334', 'TAIGA':'9a764f', 'SNOWY':'8f7a5a',
+    'DESERT':'a38046', 'SAVANNA':'a38046', 'JUNGLE':'a36346',
+    'SWAMP':'7b5334', 'MANGROVE':'7b5334', 'FLOWER_FOREST':'a36d46',
+    'OLD_GROWTH_BIRCH':'a37246', 'OLD_GROWTH_PINE':'9c754d',
+    'OLD_GROWTH_SPRUCE':'9a764f', 'SNOWY_TAIGA':'8f7a5a',
+    'WINDSWEPT_HILLS':'977752', 'MEADOW':'a17148', 'GROVE':'8f7a5a',
+    'SNOWY_SLOPES':'8f7a5a', 'FROZEN_PEAKS':'8f7a5a', 'JAGGED_PEAKS':'8f7a5a',
+    'STONY_PEAKS':'927957', 'SPARSE_JUNGLE':'a36346', 'BAMBOO_JUNGLE':'a36346',
+    'CHERRY_GROVE':'a17148', 'MUSHROOM_FIELDS':'a36246', 'RIVER':'a17448',
+    'FROZEN_RIVER':'8f7a5a', 'BEACH':'a37546', 'SNOWY_BEACH':'917958',
+    'STONY_SHORE':'977752', 'WARM_OCEAN':'a17448', 'LUKEWARM_OCEAN':'a17448',
+    'COLD_OCEAN':'a17448', 'FROZEN_OCEAN':'8f7a5a', 'BADLANDS':'9e814d',
+    'OCEAN':'a17448', 'PALE_GARDEN':'a0a69c', 'DAPPLED_FOREST':'8c3a04',
+}
 TEXTURE_SETS = [('MAIN','Main','Bundled main textures (default)'),
                 ('BB','BB','Bundled alternative textures')]
 
@@ -138,6 +156,7 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     block_texture_set: EnumProperty(name='Block textures', items=TEXTURE_SETS, default='MAIN', update=update)
     sun_texture_set: EnumProperty(name='Sun textures', items=TEXTURE_SETS + [('BB_CELESTIAL','BB Celestial','Alternative bb/celestial/sun.png')], default='MAIN', update=update)
     moon_texture_set: EnumProperty(name='Moon textures', items=TEXTURE_SETS, default='MAIN', update=update)
+    dry_foliage_colormap: PointerProperty(name='Dry foliage colormap', type=bpy.types.Image, description='Optional resource-pack textures/colormap/dry_foliage.png for leaf litter', update=update)
     grass_side_overlay: PointerProperty(name='Grass side overlay', type=bpy.types.Image, description='Optional RGBA grass_block_side_overlay.png; empty uses the bundled default. Uses the side diffuse UVs, not a normal map', update=update)
     biome_atmosphere: BoolProperty(name='Biome sky color', description='Use a temperature-based Minecraft-style daytime sky without overwriting day/night colors', default=False, update=update)
     grass_colormap: PointerProperty(name='Grass colormap', type=bpy.types.Image, description='Optional resource-pack textures/colormap/grass.png', update=update)
@@ -192,6 +211,7 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     biome: EnumProperty(name='Biome', items=BIOME_ITEMS, default='PLAINS', update=update)
     grass_color: color('Grass', '91bd59')
     foliage_color: color('Foliage', '77ab2f')
+    dry_foliage_color: color('Dry foliage / leaf litter', 'a37546')
     water_color: color('Water', '3f76e4')
     oak_color: color('Oak leaves', '77ab2f')
     spruce_color: color('Spruce leaves', '619961')
@@ -227,7 +247,7 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     texture_fps: FloatProperty(name='Texture animation speed', description='FPS for opted-in vertical-strip image textures; does not change scene FPS', default=20, min=0, soft_max=60, update=update)
     preview_day_cycle: BoolProperty(name='Animate day cycle', default=False, update=update)
     cycle_frames: IntProperty(name='Frames per day', default=2400, min=24, update=update)
-    tint_kind: EnumProperty(name='Tint kind', options=set(), items=[(x,x.replace('_',' ').title(),'') for x in ['GRASS','FOLIAGE','WATER','OAK','SPRUCE','BIRCH','JUNGLE','ACACIA','DARK_OAK','MANGROVE','GRASS_SIDE']])
+    tint_kind: EnumProperty(name='Tint kind', options=set(), items=[(x,x.replace('_',' ').title(),'') for x in ['GRASS','FOLIAGE','WATER','OAK','SPRUCE','BIRCH','JUNGLE','ACACIA','DARK_OAK','MANGROVE','GRASS_SIDE','DRY_FOLIAGE']])
     fold_sun: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_sky: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_cloud: BoolProperty(default=False, options={'SKIP_SAVE'})
