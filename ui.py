@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import bpy
 from . import engine
-from .operators import animatable_key, animation_icon
 
 
 # Environment sections in the World Properties editor.
@@ -10,7 +9,7 @@ def section_fields(p, section):
     if section=='sky':
         if p.sky_mode=='CUSTOM':
             return ['sky_mode','background_image','background_type','background_stretch' if p.background_type=='IMAGE' else 'background_rotation']
-        return ['sky_mode','sun_image','sun_tilt','sun_scale','moon_image','moon_phase','moon_tilt','moon_scale','stars_count','stars_size','stars_size_random','stars_strength']
+        return ['sky_mode','sun_texture_set','sun_image','sun_tilt','sun_scale','moon_texture_set','moon_image','moon_phase','moon_tilt','moon_scale','stars_count','stars_size','stars_size_random','stars_strength']
     if section=='cloud': return ['cloud_mode','cloud_image','cloud_speed','cloud_offset','cloud_height','cloud_size','cloud_blocks','cloud_thickness','cloud_coverage','cloud_seed']
     if section=='ground': return ['ground_follow_biome']+([] if p.ground_follow_biome else ['ground_type'])+['ground_image','ground_tint_image','ground_normal','ground_material','ground_size','ground_height','ground_tile']
     if section=='fog':
@@ -19,7 +18,7 @@ def section_fields(p, section):
     return []
 
 
-BIOME_FIELDS=['grass_color','foliage_color','water_color','oak_color','spruce_color','birch_color','jungle_color','acacia_color','dark_oak_color','mangrove_color']
+BIOME_FIELDS=['grass_color','foliage_color','dry_foliage_color','water_color','oak_color','spruce_color','birch_color','jungle_color','acacia_color','dark_oak_color','mangrove_color']
 SECTIONS=[('sun','Sunlight',None),('sky','Sky background',None),('cloud','Clouds','clouds'),('ground','Ground','ground')]
 
 
@@ -35,11 +34,11 @@ def field(layout,p,key):
 def section(layout,p,key,title,toggle=None):
     row=layout.row(align=True)
     row.use_property_split=False
+    row.use_property_decorate=False
     row.prop(p,'fold_'+key,text=title,icon='TRIA_DOWN' if getattr(p,'fold_'+key) else 'TRIA_RIGHT',emboss=False)
     if toggle:
         row.prop(p,toggle,text='')
-        op=row.operator('mcenv.animate_property',text='',icon=animation_icon(p.id_data,toggle))
-        op.property_name=toggle
+        row.prop_decorator(p,toggle)
     if getattr(p,'fold_'+key):
         col=layout.column(align=True)
         if toggle: col.enabled=getattr(p,toggle)
@@ -96,6 +95,7 @@ class MCENV_PT_environment(bpy.types.Panel):
         if p.biome=='CUSTOM': color_grid(box,p,BIOME_FIELDS)
         else: box.operator('mcenv.custom_biome',icon='COLOR')
         box.prop(p,'biome_scope'); box.prop(p,'biome_texture_mode')
+        box.prop(p,'block_texture_set')
         field(box,p,'grass_side_overlay')
         if not p.grass_side_overlay:
             box.label(text='Default: bundled grass_block_side_overlay.png',icon='TEXTURE')
@@ -112,6 +112,7 @@ class MCENV_PT_environment(bpy.types.Panel):
         advanced=box.column(align=True)
         advanced.label(text='Optional resource-pack colormaps:')
         field(advanced,p,'grass_colormap'); field(advanced,p,'foliage_colormap')
+        field(advanced,p,'dry_foliage_colormap')
         layout.separator(); layout.label(text='Day scene colors:')
         color_grid(layout,p,['day_sky','day_clouds','day_sunlight','day_ambient'])
         layout.separator(); layout.label(text='Night scene colors:')
@@ -133,31 +134,9 @@ class MCENV_PT_environment(bpy.types.Panel):
             layout.operator('mcenv.remove',icon='TRASH')
 
 
-def button_context_menu(self, context):
-    p = context.scene.mc_env if context.scene and hasattr(context.scene,'mc_env') else None
-    if not p:
-        return
-    key = None
-    pointer = getattr(context,'button_pointer',None)
-    prop = getattr(context,'button_prop',None)
-    if pointer == p and prop:
-        key = prop.identifier
-    operator = getattr(context,'button_operator',None)
-    if operator:
-        identifier = operator.bl_rna.identifier
-        if identifier == 'MCENV_OT_time_dial': key = 'time'
-        elif identifier == 'MCENV_OT_rotation_dial': key = 'rotation'
-    if key and animatable_key(p,key):
-        self.layout.separator()
-        op=self.layout.operator('mcenv.animate_property',text='Animate Property',icon='KEY_HLT')
-        op.property_name=key
-
-
 def register():
     bpy.utils.register_class(MCENV_PT_environment)
-    bpy.types.UI_MT_button_context_menu.append(button_context_menu)
 
 
 def unregister():
-    bpy.types.UI_MT_button_context_menu.remove(button_context_menu)
     bpy.utils.unregister_class(MCENV_PT_environment)
