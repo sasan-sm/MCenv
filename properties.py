@@ -65,7 +65,7 @@ CLIMATE = {
     'PLAINS': (.8,.4), 'FOREST': (.7,.8), 'BIRCH_FOREST': (.6,.6),
     'DARK_FOREST': (.7,.8), 'DAPPLED_FOREST': (.6,.6),
     'TAIGA': (.25,.8), 'SNOWY': (0,.5),
-    'DESERT': (2,0), 'SAVANNA': (1.2,0), 'JUNGLE': (.95,.9),
+    'DESERT': (2,0), 'SAVANNA': (2,0), 'JUNGLE': (.95,.9),
     'SWAMP': (.8,.9), 'MANGROVE': (.8,.9), 'BADLANDS': (2,0),
     'FLOWER_FOREST': (.7,.8), 'OLD_GROWTH_BIRCH': (.6,.6),
     'OLD_GROWTH_PINE': (.3,.8), 'OLD_GROWTH_SPRUCE': (.25,.8),
