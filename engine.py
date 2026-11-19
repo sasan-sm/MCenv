@@ -240,41 +240,84 @@ def emission_mat(scene, role):
     return m
 
 
-def celestial(scene, role, direction, scale, tint, image, tilt):
-    o=object_for(scene,role)
-    if not o.data.vertices:
-        cube_geometry(o.data,[(0,0,0)],1,1,1,True)
-        uv=o.data.uv_layers.new(name='UVMap')
-        for poly in o.data.polygons:
-            for li,co in zip(poly.loop_indices,[(0,0),(1,0),(1,1),(0,1)]): uv.data[li].uv=co
-    center=scene.camera.matrix_world.translation if scene.camera else Vector((0,0,0))
-    o.location=center+direction*900
-    o.rotation_euler=direction.to_track_quat('Z','Y').to_euler()
-    o.rotation_euler.rotate_axis('Z',math.radians(tilt))
-    o.scale=(36*scale,36*scale,36*scale)
-    o.hide_render=scale <= 0 or scene.mc_env.sky_mode != 'MINECRAFT'
-    o.hide_viewport=o.hide_render
-    if hasattr(o,'visible_shadow'): o.visible_shadow=False
-    m=emission_mat(scene,role); put_mat(o,m); t=m.node_tree
-    em=t.nodes['Emission']; em.inputs[0].default_value=rgba(tint); em.inputs[1].default_value=1
-    tex=t.nodes['Texture']; tex.image=image
-    alpha=t.nodes['Alpha']
-    for socket in (em.inputs[0],alpha.inputs[0]):
-        for l in list(socket.links): t.links.remove(l)
-    alpha.inputs[0].default_value=1
-    if image:
-        link(t,tex,'Color',em,0); link(t,tex,'Alpha',alpha,0)
-    # Bundled vanilla sprites use black RGB backgrounds. Additive emission
-    # makes black transparent without cutting off the soft pixel glow. Custom
-    # RGBA images keep the ordinary alpha path and are never modified.
-    additive=t.nodes.get('Additive sprite')
-    if image and image.get('mcenv_additive'):
-        if additive is None:
-            additive=node(t,'ShaderNodeAddShader','Additive sprite')
-            link(t,t.nodes['Transparent'],0,additive,0); link(t,em,0,additive,1)
-        link(t,additive,0,t.nodes['Output'],'Surface')
+def celestial(scene, role, direction, scale, image, tilt):
+    """Project a sprite into the World, independent of camera/viewport clipping.
+
+    Like Mine-imator, opaque black-backed sprites are added to the sky; RGBA
+    overrides use their alpha. Like MCprep's shader sky, this works without a
+    distant mesh and keeps sky artwork separate from scene illumination.
+    """
+    t=scene.world.node_tree
+    prefix=role+' sprite '
+    if not t.nodes.get(prefix+'Texture'):
+        def n(kind, name, **attrs): return node(t,kind,prefix+name,**attrs)
+        def dot(name):
+            result=n('ShaderNodeVectorMath',name,operation='DOT_PRODUCT')
+            link(t,t.nodes['Coordinates'],'Normal',result,0)
+            return result
+        forward=dot('Forward'); right=dot('Right'); up=dot('Up')
+        # Perspective UVs: (ray dot right/up) / (ray dot forward).
+        uv=n('ShaderNodeCombineXYZ','UV')
+        for axis,source in [('X',right),('Y',up)]:
+            divide=n('ShaderNodeMath',axis+' divide',operation='DIVIDE')
+            link(t,source,'Value',divide,0); link(t,forward,'Value',divide,1)
+            size=n('ShaderNodeMath',axis+' size',operation='MULTIPLY_ADD')
+            size.inputs[2].default_value=.5
+            link(t,divide,0,size,0); link(t,size,0,uv,axis)
+        texture=n('ShaderNodeTexImage','Texture',interpolation='Closest',extension='CLIP')
+        link(t,uv,0,texture,'Vector')
+        facing=n('ShaderNodeMath','Facing',operation='GREATER_THAN')
+        facing.inputs[1].default_value=0
+        link(t,forward,'Value',facing,0)
+        opacity=n('ShaderNodeMath','Opacity',operation='MULTIPLY')
+        link(t,facing,0,opacity,0)
+        alpha=n('ShaderNodeMath','Alpha',operation='MULTIPLY')
+        link(t,texture,'Alpha',alpha,0); link(t,opacity,0,alpha,1)
+        masked=n('ShaderNodeMixRGB','Masked',blend_type='MULTIPLY')
+        masked.inputs[0].default_value=1
+        link(t,texture,'Color',masked,1); link(t,alpha,0,masked,2)
+        blend=n('ShaderNodeMixRGB','Blend')
+        link(t,alpha,0,blend,0); link(t,texture,'Color',blend,2)
+    # World Normal points into the scene; negate the outgoing sky direction.
+    normal=-direction.normalized()
+    rotation=normal.to_track_quat('Z','Y')
+    right=rotation @ Vector((1,0,0)); up=rotation @ Vector((0,1,0))
+    angle=math.radians(tilt)
+    t.nodes[prefix+'Forward'].inputs[1].default_value=normal
+    t.nodes[prefix+'Right'].inputs[1].default_value=right*math.cos(angle)+up*math.sin(angle)
+    t.nodes[prefix+'Up'].inputs[1].default_value=up*math.cos(angle)-right*math.sin(angle)
+    # Full card spans about ten degrees, with the pixel core inside that card.
+    for axis in ('X','Y'):
+        t.nodes[prefix+axis+' size'].inputs[1].default_value=1/max(.000001,.18*scale)
+    t.nodes[prefix+'Texture'].image=image
+    visibility=max(0,min(1,(direction.z+.15)/.15))
+    t.nodes[prefix+'Opacity'].inputs[1].default_value=visibility if scale>0 and scene.mc_env.sky_mode=='MINECRAFT' else 0
+    blend=t.nodes[prefix+'Blend']
+    additive=image is not None and bool(image.get('mcenv_additive'))
+    blend.blend_type='ADD' if additive else 'MIX'
+    if additive:
+        for old in list(blend.inputs[0].links): t.links.remove(old)
+        blend.inputs[0].default_value=1
+        link(t,t.nodes[prefix+'Masked'],0,blend,2)
     else:
-        link(t,alpha,0,t.nodes['Output'],'Surface')
+        link(t,t.nodes[prefix+'Alpha'],0,blend,0)
+        link(t,t.nodes[prefix+'Texture'],'Color',blend,2)
+    if role=='Sun':
+        source=t.nodes['Visible sky'].inputs['Color']
+        # sync() has just restored the selected base background input.
+        if source.links: t.links.new(source.links[0].from_socket,blend.inputs[1])
+        else:
+            for old in list(blend.inputs[1].links): t.links.remove(old)
+            blend.inputs[1].default_value=source.default_value[:]
+    else:
+        link(t,t.nodes['Sun sprite Blend'],0,blend,1)
+        link(t,blend,0,t.nodes['Visible sky'],'Color')
+    # Only remove obsolete MCenv-owned cards, never user objects.
+    old=owned(scene,role)
+    if old:
+        mesh=old.data
+        bpy.data.objects.remove(old,do_unlink=True)
+        if mesh.users==0: bpy.data.meshes.remove(mesh)
 
 
 def stars_setup(scene, night):
@@ -492,8 +535,8 @@ def sync(scene):
         for role,d,energy,c in [('Sunlight',direction,p.sun_strength*daylight,mix(p.day_sunlight,rgb('ffad66'),twilight*.65)),('Moonlight',-direction,p.night_strength*night,rgb('a9c2ff'))]:
             o=object_for(scene,role,'SUN'); o.rotation_euler=(-d).to_track_quat('-Z','Y').to_euler()
             o.data.energy=energy; o.data.color=c; o.data.angle=math.radians(p.sun_angle)
-        celestial(scene,'Sun',direction,p.sun_scale,p.day_sunlight,assets.sun_image(p),p.sun_tilt)
-        celestial(scene,'Moon',-direction,p.moon_scale,rgb('dce7ff'),assets.moon_image(p),p.moon_tilt)
+        celestial(scene,'Sun',direction,p.sun_scale,assets.sun_image(p),p.sun_tilt)
+        celestial(scene,'Moon',-direction,p.moon_scale,assets.moon_image(p),p.moon_tilt)
         stars_setup(scene,star_night)
         ground_setup(scene)
         clouds_setup(scene,sec,mix(p.night_clouds,p.day_clouds,daylight))
