@@ -158,35 +158,6 @@ class MCENV_OT_custom_biome(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class MCENV_OT_ground_texture(bpy.types.Operator):
-    bl_idname='mcenv.ground_from_world'
-    bl_label='Use Imported Ground Texture'
-    bl_description='Reuse a matching diffuse image already loaded by MCprep (not a mixed side texture or atlas)'
-    bl_options={'REGISTER','UNDO'}
-
-    def execute(self,context):
-        p=context.scene.mc_env; kind=engine.ground_kind(p)
-        names={'GRASS':{'grass_block_top','grass_top'},'DIRT':{'dirt'},
-               'SAND':{'sand','red_sand'},'STONE':{'stone'},
-               'SNOW':{'snow','snow_block'},'WATER':{'water_still','water','water_flow'}}[kind]
-        candidates=[]
-        for obj in context.scene.objects:
-            if obj.type!='MESH' or obj.get('mcenv_owner'): continue
-            for slot in obj.material_slots:
-                if slot.material:
-                    for image in biome_materials.diffuse_images(slot.material):
-                        if biome_materials.canonical(image.name) in names:
-                            candidates.append(image)
-        if not candidates:
-            self.report({'WARNING'},'No matching separate diffuse texture found; load your own texture or use procedural ground')
-            return {'CANCELLED'}
-        p.ground_image=candidates[0]
-        p.ground_tint_image=kind in {'GRASS','WATER'}
-        engine.sync(context.scene)
-        self.report({'INFO'},'Ground texture loaded. Grass/water follows the biome, with estimated compensation for baked colors.')
-        return {'FINISHED'}
-
-
 class MCENV_OT_tint(bpy.types.Operator):
     bl_idname='mcenv.bind_tint'
     bl_label='Apply Biome Tint to Selected'
@@ -334,7 +305,7 @@ class MCENV_OT_reset(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_image,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_detect_biome,MCENV_OT_restore_biome,MCENV_OT_custom_biome,MCENV_OT_ground_texture,MCENV_OT_tint,MCENV_OT_untint,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
+CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_image,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_detect_biome,MCENV_OT_restore_biome,MCENV_OT_custom_biome,MCENV_OT_tint,MCENV_OT_untint,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
 
 
 def register():

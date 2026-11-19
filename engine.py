@@ -148,7 +148,7 @@ def biome_color(p, kind):
 
 
 def ground_kind(p):
-    if not p.ground_follow_biome: return p.ground_type
+    if not p.ground_follow_biome: return 'GRASS'
     if p.biome in {'DESERT','BEACH','BADLANDS'}: return 'SAND'
     if p.biome in {'SNOWY','SNOWY_TAIGA','SNOWY_SLOPES','SNOWY_BEACH','GROVE','FROZEN_PEAKS','JAGGED_PEAKS'}: return 'SNOW'
     if p.biome in {'OCEAN','WARM_OCEAN','LUKEWARM_OCEAN','COLD_OCEAN','FROZEN_OCEAN','RIVER','FROZEN_RIVER'}: return 'WATER'
@@ -361,59 +361,44 @@ def ground_setup(scene):
         uv=o.data.uv_layers.new(name='UVMap')
         for poly in o.data.polygons:
             for li,co in zip(poly.loop_indices,[(0,0),(1,0),(1,1),(0,1)]): uv.data[li].uv=co
-    o.location=(0,0,p.ground_height); o.scale=(p.ground_size,p.ground_size,1)
+    o.location=(0,0,-.02); o.scale=(1024,1024,1)
     o.hide_render=not p.ground; o.hide_viewport=not p.ground
     m=material(scene,'Ground'); put_mat(o,m); t=m.node_tree
-    if not t.nodes.get('Surface'):
+    if not t.nodes.get('Ground texture'):
         t.nodes.clear()
         out=node(t,'ShaderNodeOutputMaterial','Output')
         bs=node(t,'ShaderNodeBsdfPrincipled','Surface'); link(t,bs,0,out,0)
-        bs.inputs['Roughness'].default_value=.85
         coord=node(t,'ShaderNodeTexCoord','Coordinates')
-        scale=node(t,'ShaderNodeVectorMath','Tiling',operation='SCALE')
-        link(t,coord,'UV',scale,0)
-        noise=node(t,'ShaderNodeTexNoise','Pixels'); noise.inputs['Scale'].default_value=16; noise.inputs['Detail'].default_value=0
-        # Quantize coordinates before noise for blocky original texture.
-        snap=node(t,'ShaderNodeVectorMath','Pixel grid',operation='SNAP'); snap.inputs[1].default_value=(1/16,1/16,1/16)
-        link(t,scale,0,snap,0); link(t,snap,0,noise,0)
-        tint=node(t,'ShaderNodeMixRGB','Tint',blend_type='MULTIPLY'); tint.inputs[0].default_value=.3
-        link(t,noise,'Fac',tint,2); link(t,tint,0,bs,'Base Color')
-        for name in ('Albedo','Normal','Roughness'):
-            im=node(t,'ShaderNodeTexImage',name,interpolation='Closest',extension='REPEAT'); link(t,scale,0,im,0)
-        normal=node(t,'ShaderNodeNormalMap','Normal map'); link(t,t.nodes['Normal'],'Color',normal,'Color')
-        albedo_tint=node(t,'ShaderNodeMixRGB','Image biome tint',blend_type='MULTIPLY')
-        albedo_tint.inputs[0].default_value=1
-        link(t,t.nodes['Albedo'],'Color',albedo_tint,1)
-    # Also migrate existing ground materials: Generated coordinates collapse
-    # on a zero-thickness plane; UV gives stable one-block texture repeats.
-    link(t,t.nodes['Coordinates'],'UV',t.nodes['Tiling'],0)
-    t.nodes['Tiling'].inputs['Scale'].default_value=p.ground_size/p.ground_tile
+        tiling=node(t,'ShaderNodeVectorMath','Tiling',operation='SCALE')
+        tiling.inputs['Scale'].default_value=1024
+        link(t,coord,'UV',tiling,0)
+        tex=node(t,'ShaderNodeTexImage','Ground texture',interpolation='Closest',extension='REPEAT')
+        link(t,tiling,0,tex,'Vector')
+        tint=node(t,'ShaderNodeMixRGB','Biome tint',blend_type='MULTIPLY')
+        tint.inputs[0].default_value=1
+        link(t,tex,'Color',tint,1); link(t,tint,0,bs,'Base Color')
+    image=p.ground_image or assets.bundled_image('block/main/grass_block_top.png')
+    t.nodes['Ground texture'].image=image
     kind=ground_kind(p)
-    c=biome_color(p,'GRASS') if kind=='GRASS' else biome_color(p,'WATER') if kind=='WATER' else rgb({'DIRT':'846044','SAND':'dbc998','STONE':'858585','SNOW':'edf4ff'}[kind])
-    t.nodes['Tint'].inputs[1].default_value=rgba(c)
-    image_color=(1,1,1)
-    if kind in {'GRASS','WATER'} and p.ground_tint_image:
+    color=biome_color(p,'GRASS') if kind=='GRASS' else biome_color(p,'WATER') if kind=='WATER' else rgb({'SAND':'dbc998','STONE':'858585','SNOW':'edf4ff'}[kind])
+    tint=(1,1,1)
+    if p.ground_follow_biome:
         from .biome_materials import image_baseline
-        image=p.ground_image
-        signature=str((image.as_pointer(),tuple(image.size),image.colorspace_settings.name,kind)) if image else ''
+        signature=str((image.as_pointer(),tuple(image.size),image.colorspace_settings.name,kind))
         if m.get('mcenv_ground_image') != signature:
             m['mcenv_ground_baseline']=image_baseline(image,kind=='GRASS')[0]
             m['mcenv_ground_image']=signature
         baseline=m.get('mcenv_ground_baseline',(1,1,1))
-        image_color=tuple(c[i]/max(.04,baseline[i]) for i in range(3))
-    t.nodes['Image biome tint'].inputs[2].default_value=rgba(image_color)
+        tint=tuple(color[i]/max(.04,baseline[i]) for i in range(3))
+    elif image.get('mcenv_asset')=='block/main/grass_block_top.png':
+        # The bundled top is grayscale; use a fixed plains tint until following.
+        tint=rgb('91bd59')
+    t.nodes['Biome tint'].inputs[2].default_value=rgba(tint)
     bs=t.nodes['Surface']
     bs.inputs['Roughness'].default_value=.14 if kind=='WATER' else .85
     bs.inputs['IOR'].default_value=1.333 if kind=='WATER' else 1.45
     transmission=bs.inputs.get('Transmission Weight') or bs.inputs.get('Transmission')
     if transmission: transmission.default_value=.35 if kind=='WATER' else 0
-    for name,img,socket,source in [('Albedo',p.ground_image,'Base Color','Color'),('Roughness',p.ground_material,'Roughness','Color'),('Normal',p.ground_normal,'Normal','Normal')]:
-        tex=t.nodes[name]; tex.image=img
-        for l in list(bs.inputs[socket].links): t.links.remove(l)
-        if img:
-            if name=='Albedo': link(t,t.nodes['Image biome tint'],0,bs,socket)
-            else: link(t,t.nodes['Normal map'] if name=='Normal' else tex,source,bs,socket)
-        elif name=='Albedo': link(t,t.nodes['Tint'],0,bs,socket)
 
 
 def cloud_material(scene, faded):
@@ -474,7 +459,7 @@ def clouds_setup(scene, seconds, c):
 def fog_setup(scene, sky):
     p=scene.mc_env; o=object_for(scene,'Fog')
     if not o.data.vertices: cube_geometry(o.data,[(0,0,0)])
-    span=max(p.ground_size,2048)
+    span=2048
     o.location=(0,0,p.fog_height/2); o.scale=(span,span,p.fog_height)
     o.hide_render=not p.fog; o.hide_viewport=not p.fog; o.display_type='WIRE'
     m=material(scene,'Fog'); put_mat(o,m); t=m.node_tree

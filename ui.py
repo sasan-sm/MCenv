@@ -11,7 +11,7 @@ def section_fields(p, section):
             return ['sky_mode','background_image','background_type','background_stretch' if p.background_type=='IMAGE' else 'background_rotation']
         return ['sky_mode','sun_texture_set','sun_image','sun_tilt','sun_scale','moon_texture_set','moon_image','moon_phase','moon_tilt','moon_scale','stars_count','stars_size','stars_size_random','stars_strength']
     if section=='cloud': return ['cloud_mode','cloud_image','cloud_speed','cloud_offset','cloud_height','cloud_size','cloud_blocks','cloud_thickness','cloud_coverage','cloud_seed']
-    if section=='ground': return ['ground_follow_biome']+([] if p.ground_follow_biome else ['ground_type'])+['ground_image','ground_tint_image','ground_normal','ground_material','ground_size','ground_height','ground_tile']
+    if section=='ground': return ['ground_follow_biome','ground_image']
     if section=='fog':
         return ['fog_sky','fog_custom']+(['fog_color'] if p.fog_custom else [])+['fog_custom_object']+(['fog_object_color'] if p.fog_custom_object else [])+['fog_distance','fog_size','fog_height']
     if section=='wind': return ['wind_speed','wind_strength','wind_direction','wind_directional_speed','wind_directional_strength']
@@ -28,6 +28,15 @@ def field(layout,p,key):
         col=layout.column(align=True); col.label(text=prop.name)
         row=col.row(align=True); row.template_ID(p,key)
         op=row.operator('mcenv.load_image',text='',icon='FILE_FOLDER'); op.property_name=key
+        if not getattr(p,key):
+            if key=='sun_image': col.label(text='Default: '+p.sun_texture_set.replace('_',' ')+' sun.png',icon='TEXTURE')
+            elif key=='moon_image': col.label(text='Default: '+p.moon_texture_set+' moon phase',icon='TEXTURE')
+            elif key=='ground_image': col.label(text='Default: main/grass_block_top.png',icon='TEXTURE')
+    elif key == 'ground_follow_biome':
+        row=layout.row(align=True)
+        row.use_property_split=False
+        row.alignment='LEFT'
+        row.prop(p,key)
     else: layout.prop(p,key)
 
 
@@ -43,9 +52,6 @@ def section(layout,p,key,title,toggle=None):
         col=layout.column(align=True)
         if toggle: col.enabled=getattr(p,toggle)
         for name in section_fields(p,key): field(col,p,name)
-        if key=='ground':
-            col.operator('mcenv.ground_from_world',icon='TEXTURE')
-            col.label(text='Background plane only; imported terrain is unchanged.',icon='INFO')
 
 
 def color_grid(layout,p,keys):
