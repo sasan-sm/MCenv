@@ -243,6 +243,7 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     tint_kind: EnumProperty(name='Tint kind', options=set(), items=[(x,x.replace('_',' ').title(),'') for x in ['GRASS','FOLIAGE','WATER','OAK','SPRUCE','BIRCH','JUNGLE','ACACIA','DARK_OAK','MANGROVE','GRASS_SIDE','DRY_FOLIAGE']])
     fold_sun: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_sky: BoolProperty(default=False, options={'SKIP_SAVE'})
+    fold_colors: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_cloud: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_ground: BoolProperty(default=False, options={'SKIP_SAVE'})
     fold_fog: BoolProperty(default=False, options={'SKIP_SAVE'})

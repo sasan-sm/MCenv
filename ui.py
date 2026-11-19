@@ -8,8 +8,8 @@ def section_fields(p, section):
     if section=='sun': return ['sun_angle','sun_strength','ambient_strength','night_strength']
     if section=='sky':
         if p.sky_mode=='CUSTOM':
-            return ['sky_mode','background_image','background_type','background_stretch' if p.background_type=='IMAGE' else 'background_rotation']
-        return ['sky_mode','sun_texture_set','sun_image','sun_tilt','sun_scale','moon_texture_set','moon_image','moon_phase','moon_tilt','moon_scale','stars_count','stars_size','stars_size_random','stars_strength']
+            return ['sky_mode','background_image','background_type','background_stretch' if p.background_type=='IMAGE' else 'background_rotation','twilight']
+        return ['sky_mode','sun_texture_set','sun_image','sun_tilt','sun_scale','moon_texture_set','moon_image','moon_phase','moon_tilt','moon_scale','stars_count','stars_size','stars_size_random','stars_strength','twilight']
     if section=='cloud': return ['cloud_mode','cloud_image','cloud_speed','cloud_offset','cloud_height','cloud_size','cloud_blocks','cloud_thickness','cloud_coverage','cloud_seed']
     if section=='ground': return ['ground_follow_biome','ground_image']
     if section=='fog':
@@ -19,7 +19,7 @@ def section_fields(p, section):
 
 
 BIOME_FIELDS=['grass_color','foliage_color','dry_foliage_color','water_color','oak_color','spruce_color','birch_color','jungle_color','acacia_color','dark_oak_color','mangrove_color']
-SECTIONS=[('sun','Sunlight',None),('sky','Sky background',None),('cloud','Clouds','clouds'),('ground','Ground','ground')]
+SECTIONS=[('sun','Sunlight',None),('sky','Sky Background',None),('colors','Scene Colors',None),('cloud','Clouds','clouds'),('ground','Ground','ground'),('fog','Fog','fog')]
 
 
 def field(layout,p,key):
@@ -52,6 +52,11 @@ def section(layout,p,key,title,toggle=None):
         col=layout.column(align=True)
         if toggle: col.enabled=getattr(p,toggle)
         for name in section_fields(p,key): field(col,p,name)
+        if key=='colors':
+            col.label(text='Day scene colors:')
+            color_grid(col,p,['day_sky','day_clouds','day_sunlight','day_ambient'])
+            col.separator(); col.label(text='Night scene colors:')
+            color_grid(col,p,['night_sky','night_clouds','night_stars','night_ambient'])
 
 
 def color_grid(layout,p,keys):
@@ -119,12 +124,7 @@ class MCENV_PT_environment(bpy.types.Panel):
         advanced.label(text='Optional resource-pack colormaps:')
         field(advanced,p,'grass_colormap'); field(advanced,p,'foliage_colormap')
         field(advanced,p,'dry_foliage_colormap')
-        layout.separator(); layout.label(text='Day scene colors:')
-        color_grid(layout,p,['day_sky','day_clouds','day_sunlight','day_ambient'])
-        layout.separator(); layout.label(text='Night scene colors:')
-        color_grid(layout,p,['night_sky','night_clouds','night_stars','night_ambient'])
-        layout.prop(p,'twilight')
-        section(layout,p,'fog','Fog','fog'); section(layout,p,'wind','Wind','wind')
+        section(layout,p,'wind','Wind','wind')
         layout.prop(p,'texture_fps',text='Texture animation speed')
         layout.separator()
         row=layout.row(); row.prop(p,'fold_tools',text='Blender tools',icon='TRIA_DOWN' if p.fold_tools else 'TRIA_RIGHT',emboss=False)
