@@ -149,7 +149,31 @@ class MCENV_MaterialBinding(bpy.types.PropertyGroup):
     original_link: StringProperty(default='DATA')
 
 
+def animation_update(self, context):
+    from . import engine
+    scene=self.id_data
+    if isinstance(scene,bpy.types.Scene): engine.sync(scene)
+
+
+def animation_mode_update(self, context):
+    from . import engine
+    if self.object: engine.animation_weights(self.object,self.mode)
+    animation_update(self,context)
+
+
+class MCENV_AnimationObject(bpy.types.PropertyGroup):
+    object: PointerProperty(type=bpy.types.Object)
+    enabled: BoolProperty(name='Animate object', default=True, update=animation_update)
+    mode: EnumProperty(name='Motion', items=[('AUTO','Auto','Leaves use flutter; other meshes use root-pinned sway'),('GRASS','Grass / plant','Pin the base of each disconnected mesh island'),('LEAVES','Leaves','Full-weight spatial flutter for leaf blocks'),('CUSTOM','Custom weights','Keep or paint MCENV_Wind weights')], default='AUTO', update=animation_mode_update)
+    influence: FloatProperty(name='Influence', default=1, min=0, soft_max=3, update=animation_update)
+
+
 class MCENV_Settings(bpy.types.PropertyGroup):
+    animation_objects: CollectionProperty(type=MCENV_AnimationObject)
+    animation_candidate: PointerProperty(name='Object', type=bpy.types.Object, description='Choose a mesh in this scene and press Add, or use Add Selected')
+    animate: BoolProperty(name='Animate', description='Enable day-cycle, opted-in texture and listed-object animation', default=True, update=update)
+    texture_animate: BoolProperty(name='Texture animate', description='Play opted-in vertical texture strips; add strips with the button below', default=True, update=update)
+    fold_animate: BoolProperty(default=False, options={'SKIP_SAVE'})
     material_bindings: CollectionProperty(type=MCENV_MaterialBinding)
     biome_scope: EnumProperty(name='Apply to', items=[('SCENE','Entire imported scene','All editable meshes in this scene'),('SELECTED','Selected objects','Only selected editable meshes')], default='SCENE')
     biome_texture_mode: EnumProperty(name='Texture colors', items=[('AUTO','Auto','Reuse active MCprep tint; compensate baked colors when possible'),('GRAYSCALE','Grayscale','Multiply untinted grayscale textures'),('COLORED','Already colored','Compensate estimated baked texture color')], default='AUTO')
@@ -253,6 +277,7 @@ class MCENV_Settings(bpy.types.PropertyGroup):
 
 def register():
     bpy.utils.register_class(MCENV_MaterialBinding)
+    bpy.utils.register_class(MCENV_AnimationObject)
     bpy.utils.register_class(MCENV_Settings)
     bpy.types.Scene.mc_env = PointerProperty(type=MCENV_Settings)
 
@@ -260,4 +285,5 @@ def register():
 def unregister():
     del bpy.types.Scene.mc_env
     bpy.utils.unregister_class(MCENV_Settings)
+    bpy.utils.unregister_class(MCENV_AnimationObject)
     bpy.utils.unregister_class(MCENV_MaterialBinding)

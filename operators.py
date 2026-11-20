@@ -2,7 +2,7 @@
 import json
 import math
 import bpy
-from bpy.props import StringProperty
+from bpy.props import StringProperty, IntProperty, BoolProperty
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 from . import engine, biome_materials
 
@@ -79,6 +79,55 @@ class MCENV_OT_image(bpy.types.Operator,ImportHelper):
         return {'FINISHED'}
 
 
+class MCENV_OT_animation_add(bpy.types.Operator):
+    bl_idname='mcenv.animation_add'
+    bl_label='Add'
+    bl_description='Animate the chosen object, or selected meshes if the picker is empty; originals remain unchanged'
+    bl_options={'REGISTER','UNDO'}
+    use_selected: BoolProperty(default=False, options={'HIDDEN','SKIP_SAVE'})
+
+    def execute(self,context):
+        scene=context.scene; p=scene.mc_env
+        objects=list(context.selected_objects) if self.use_selected or not p.animation_candidate else [p.animation_candidate]
+        existing={item.object for item in p.animation_objects if item.object}
+        count=0; skipped=0
+        for obj in objects:
+            if obj in existing: continue
+            if (obj.type!='MESH' or obj.get('mcenv_owner') or obj.library or obj.data.library or obj.data.users>1
+                    or obj.override_library or obj.mode!='OBJECT' or obj.name not in scene.objects
+                    or sum(obj.name in s.objects for s in bpy.data.scenes)>1):
+                skipped+=1; continue
+            mode='CUSTOM' if obj.vertex_groups.get('MCENV_Wind') else 'AUTO'
+            engine.build_animation(scene,obj,mode)
+            # Replace the old selected-object wind tool, never stack two sways.
+            for mod in list(obj.modifiers):
+                if mod.get('mcenv_wind'):
+                    group=mod.node_group; obj.modifiers.remove(mod)
+                    if group and group.users==0: bpy.data.node_groups.remove(group)
+            item=p.animation_objects.add(); item.object=obj; item.mode=mode
+            existing.add(obj); count+=1
+        engine.sync(scene)
+        self.report({'INFO'} if count else {'WARNING'},f'Added {count} objects; {skipped} unsupported/shared objects skipped. Duplicates are not added.')
+        return {'FINISHED'} if count else {'CANCELLED'}
+
+
+class MCENV_OT_animation_remove(bpy.types.Operator):
+    bl_idname='mcenv.animation_remove'
+    bl_label='Remove from Animate'
+    bl_description='Remove only the MCenv animation modifier and list entry, not the object or painted weights'
+    bl_options={'REGISTER','UNDO'}
+    index: IntProperty(default=-1)
+
+    def execute(self,context):
+        p=context.scene.mc_env
+        if not 0<=self.index<len(p.animation_objects): return {'CANCELLED'}
+        obj=p.animation_objects[self.index].object
+        if obj: engine.remove_animation(context.scene,obj)
+        p.animation_objects.remove(self.index)
+        engine.sync(context.scene)
+        return {'FINISHED'}
+
+
 class MCENV_OT_wind(bpy.types.Operator):
     bl_idname='mcenv.bind_wind'
     bl_label='Add Wind to Selected'
@@ -89,7 +138,8 @@ class MCENV_OT_wind(bpy.types.Operator):
         meshes=[o for o in context.selected_objects if o.type=='MESH' and not o.get('mcenv_owner') and o.library is None]
         if not meshes:
             self.report({'WARNING'},'Select editable mesh objects first'); return {'CANCELLED'}
-        for obj in meshes: engine.build_wind(obj)
+        for obj in meshes:
+            if not any(engine.animation_owner(m) for m in obj.modifiers): engine.build_wind(obj)
         engine.sync(context.scene)
         self.report({'INFO'},f'Wind added to {len(meshes)} meshes. Paint MCENV_Wind weights as needed.')
         return {'FINISHED'}
@@ -305,7 +355,7 @@ class MCENV_OT_reset(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_image,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_detect_biome,MCENV_OT_restore_biome,MCENV_OT_custom_biome,MCENV_OT_tint,MCENV_OT_untint,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
+CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_image,MCENV_OT_animation_add,MCENV_OT_animation_remove,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_detect_biome,MCENV_OT_restore_biome,MCENV_OT_custom_biome,MCENV_OT_tint,MCENV_OT_untint,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
 
 
 def register():

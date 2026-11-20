@@ -596,7 +596,7 @@ def sync(scene):
         p=scene.mc_env; owner(scene)
         migrate_named_data(scene)
         sec=(scene.frame_current-scene.frame_start)/(scene.render.fps/scene.render.fps_base)
-        hour=(p.time+((scene.frame_current-scene.frame_start)*24/p.cycle_frames if p.preview_day_cycle else 0))%24
+        hour=(p.time+((scene.frame_current-scene.frame_start)*24/p.cycle_frames if p.animate and p.preview_day_cycle else 0))%24
         elevation=math.sin((hour-6)*math.tau/24)
         daylight=max(0,min(1,(elevation+.12)/.42)); night=1-daylight
         twilight=max(0,1-abs(elevation)/.28)*int(p.twilight)
@@ -644,8 +644,14 @@ def update_bound(scene, seconds):
     p=scene.mc_env
     from .biome_materials import refresh
     seen_materials=set()
+    listed={item.object.as_pointer():item for item in p.animation_objects if item.object}
     for obj in scene.objects:
         for mod in obj.modifiers:
+            if animation_owner(mod):
+                if animation_owner(mod)!=p.owner_id: continue
+                item=listed.get(obj.as_pointer())
+                update_animation(scene,obj,mod,item,seconds)
+                continue
             if mod.type=='NODES' and mod.get('mcenv_wind') and mod.node_group:
                 t=mod.node_group
                 t.nodes['Time'].outputs[0].default_value=seconds*p.wind_speed
@@ -664,7 +670,9 @@ def update_bound(scene, seconds):
             t=m.node_tree
             for n in t.nodes:
                 if n.get('mcenv_atlas'):
-                    rows=n['mcenv_atlas']; n.inputs[1].default_value=(0,(rows-1-int(seconds*p.texture_fps)%rows)/rows,0)
+                    rows=n['mcenv_atlas']
+                    frame=int(seconds*p.texture_fps)%rows if p.animate and p.texture_animate else 0
+                    n.inputs[1].default_value=(0,(rows-1-frame)/rows,0)
 
 
 def build_wind(obj):
@@ -696,6 +704,148 @@ def build_wind(obj):
     vec=node(t,'ShaderNodeCombineXYZ','Offset'); link(t,x,0,vec,'X'); link(t,y,0,vec,'Y')
     setpos=node(t,'GeometryNodeSetPosition','Sway'); link(t,inp,'Geometry',setpos,'Geometry'); link(t,vec,0,setpos,'Offset'); link(t,setpos,'Geometry',out,'Geometry')
     mod=obj.modifiers.new('MCenv Wind','NODES'); mod.node_group=t; mod['mcenv_wind']=True
+
+
+def animation_owner(mod):
+    # Geometry Nodes modifier ID properties that are not interface sockets can
+    # be discarded by Blender during save/load. The node-group tag is durable.
+    if mod.type=='NODES' and mod.node_group:
+        return mod.node_group.get('mcenv_animate_owner') or mod.get('mcenv_animate_owner')
+    return None
+
+
+def animation_mode(obj, mode):
+    if mode!='AUTO': return mode
+    names=[obj.name]+[slot.material.name for slot in obj.material_slots if slot.material]
+    return 'LEAVES' if any('leaves' in name.lower() or 'leaf' in name.lower() for name in names) else 'GRASS'
+
+
+def animation_weights(obj, mode):
+    """Pin each disconnected plant's own base, not the whole imported world's base.
+
+    Mine-imator's block wind masks distinguish leaf vertices from plant roots.
+    Use topology islands as the equivalent for Mineways' grouped mesh exports.
+    Custom mode never overwrites an artist's existing painted weights.
+    """
+    group=obj.vertex_groups.get('MCENV_Wind')
+    if mode=='CUSTOM' and group: return
+    group=group or obj.vertex_groups.new(name='MCENV_Wind')
+    verts=obj.data.vertices
+    if not verts: return
+    if animation_mode(obj,mode)=='LEAVES':
+        group.add(list(range(len(verts))),1,'REPLACE'); return
+    parent=list(range(len(verts)))
+    def root(i):
+        while parent[i]!=i:
+            parent[i]=parent[parent[i]]; i=parent[i]
+        return i
+    for edge in obj.data.edges:
+        a,b=map(root,edge.vertices); parent[b]=a
+    bounds={}
+    for v in verts:
+        key=root(v.index); z=v.co.z
+        lo,hi=bounds.get(key,(z,z)); bounds[key]=(min(lo,z),max(hi,z))
+    batches={}
+    for v in verts:
+        lo,hi=bounds[root(v.index)]
+        # A flat arbitrary mesh still needs to move; pin with Custom weights if needed.
+        weight=1 if hi-lo<1e-6 else max(0,min(1,(v.co.z-lo)/(hi-lo)))
+        batches.setdefault(round(weight,5),[]).append(v.index)
+    for weight,indices in batches.items(): group.add(indices,weight,'REPLACE')
+
+
+def build_animation(scene, obj, mode='AUTO'):
+    """Non-destructive, spatial three-axis waves plus a traveling directional gust.
+
+    Independently implemented Geometry Nodes, inspired by Mine-imator's
+    shader_high_material.vsh/getWind/getWindAngle and vertex_add masks.
+    """
+    token=owner(scene)
+    existing=next((m for m in obj.modifiers if animation_owner(m)==token),None)
+    if existing: return existing
+    animation_weights(obj,mode)
+    t=bpy.data.node_groups.new('MCenv Animate • '+obj.name,'GeometryNodeTree')
+    t['mcenv_animate_owner']=token
+    t.interface.new_socket(name='Geometry',in_out='INPUT',socket_type='NodeSocketGeometry')
+    t.interface.new_socket(name='Geometry',in_out='OUTPUT',socket_type='NodeSocketGeometry')
+    inp=node(t,'NodeGroupInput','Input'); out=node(t,'NodeGroupOutput','Output')
+    pos=node(t,'GeometryNodeInputPosition','Position')
+    world=node(t,'ShaderNodeCombineXYZ','World coordinates')
+    for i,axis in enumerate('XYZ'):
+        dot=node(t,'ShaderNodeVectorMath','World row '+axis,operation='DOT_PRODUCT')
+        dot.inputs[1].default_value=tuple(1 if j==i else 0 for j in range(3))
+        link(t,pos,0,dot,0); link(t,dot,'Value',world,axis)
+    origin=node(t,'ShaderNodeVectorMath','World origin',operation='ADD'); link(t,world,0,origin,0)
+    xyz=node(t,'ShaderNodeSeparateXYZ','World XYZ'); link(t,origin,0,xyz,0)
+    for name in ('Time','Amplitude','Direction','Gust speed','Gust strength','Leaf flutter'):
+        node(t,'ShaderNodeValue',name)
+    waves=[]
+    for i,axis in enumerate('XYZ'):
+        spatial=node(t,'ShaderNodeVectorMath','Wave position '+axis,operation='DOT_PRODUCT')
+        spatial.inputs[1].default_value=tuple((1.7 if j==i else .17) for j in range(3))
+        link(t,origin,0,spatial,0)
+        phase=math_node(t,'Wave phase '+axis,'ADD'); link(t,spatial,'Value',phase,0); link(t,t.nodes['Time'],0,phase,1)
+        freq=math_node(t,'Wave frequency '+axis,'MULTIPLY',b=(1.0,.73,.51)[i]); link(t,phase,0,freq,0)
+        wave=math_node(t,'Wave '+axis,'SINE'); link(t,freq,0,wave,0); waves.append(wave)
+    # A gust front travels along the wind heading across world-space positions.
+    cos=math_node(t,'Heading X','COSINE'); sin=math_node(t,'Heading Y','SINE')
+    for trig in (cos,sin): link(t,t.nodes['Direction'],0,trig,0)
+    heading=node(t,'ShaderNodeCombineXYZ','Heading'); link(t,cos,0,heading,'X'); link(t,sin,0,heading,'Y')
+    distance=node(t,'ShaderNodeVectorMath','Gust distance',operation='DOT_PRODUCT')
+    link(t,origin,0,distance,0); link(t,heading,0,distance,1)
+    spatial=math_node(t,'Gust spatial phase','MULTIPLY',b=-.12); link(t,distance,'Value',spatial,0)
+    travel=math_node(t,'Gust travel','MULTIPLY'); link(t,t.nodes['Time'],0,travel,0); link(t,t.nodes['Gust speed'],0,travel,1)
+    phase=math_node(t,'Gust phase','ADD'); link(t,spatial,0,phase,0); link(t,travel,0,phase,1)
+    gust=math_node(t,'Gust wave','SINE'); link(t,phase,0,gust,0)
+    gustamp=math_node(t,'Gust amplitude','MULTIPLY'); link(t,gust,0,gustamp,0); link(t,t.nodes['Gust strength'],0,gustamp,1)
+    offsets=node(t,'ShaderNodeCombineXYZ','World offset')
+    for axis,wave,trig in [('X',waves[0],cos),('Y',waves[1],sin)]:
+        flutter=math_node(t,'Flutter '+axis,'MULTIPLY',b=.35); link(t,wave,0,flutter,0)
+        breeze=math_node(t,'Breeze '+axis,'MULTIPLY_ADD'); breeze.inputs[1].default_value=.65
+        link(t,waves[0],0,breeze,0); link(t,gustamp,0,breeze,2)
+        directed=math_node(t,'Directed '+axis,'MULTIPLY'); link(t,breeze,0,directed,0); link(t,trig,0,directed,1)
+        combined=math_node(t,'Combined '+axis,'ADD'); link(t,directed,0,combined,0); link(t,flutter,0,combined,1)
+        link(t,combined,0,offsets,axis)
+    vertical=math_node(t,'Leaf vertical','MULTIPLY'); link(t,waves[2],0,vertical,0); link(t,t.nodes['Leaf flutter'],0,vertical,1)
+    link(t,vertical,0,offsets,'Z')
+    attr=node(t,'GeometryNodeInputNamedAttribute','Weight',data_type='FLOAT'); attr.inputs['Name'].default_value='MCENV_Wind'
+    amp=math_node(t,'Weighted amplitude','MULTIPLY'); link(t,attr,'Attribute',amp,0); link(t,t.nodes['Amplitude'],0,amp,1)
+    scale=node(t,'ShaderNodeVectorMath','Weighted world offset',operation='SCALE')
+    link(t,offsets,0,scale,0); link(t,amp,0,scale,'Scale')
+    local=node(t,'ShaderNodeCombineXYZ','Local offset')
+    for i,axis in enumerate('XYZ'):
+        dot=node(t,'ShaderNodeVectorMath','Inverse row '+axis,operation='DOT_PRODUCT')
+        dot.inputs[1].default_value=tuple(1 if j==i else 0 for j in range(3))
+        link(t,scale,0,dot,0); link(t,dot,'Value',local,axis)
+    setpos=node(t,'GeometryNodeSetPosition','Sway')
+    link(t,inp,'Geometry',setpos,'Geometry'); link(t,local,0,setpos,'Offset'); link(t,setpos,0,out,'Geometry')
+    mod=obj.modifiers.new('MCenv Animate','NODES'); mod.node_group=t
+    mod['mcenv_animate_owner']=token
+    return mod
+
+
+def update_animation(scene,obj,mod,item,seconds):
+    if not mod.node_group: return
+    p=scene.mc_env; t=mod.node_group
+    active=p.animate and p.wind and item is not None and item.enabled
+    t.nodes['Time'].outputs[0].default_value=seconds*p.wind_speed
+    t.nodes['Amplitude'].outputs[0].default_value=p.wind_strength*item.influence if active else 0
+    t.nodes['Direction'].outputs[0].default_value=math.radians(p.wind_direction)
+    t.nodes['Gust speed'].outputs[0].default_value=p.wind_directional_speed
+    t.nodes['Gust strength'].outputs[0].default_value=p.wind_directional_strength
+    t.nodes['Leaf flutter'].outputs[0].default_value=.25 if item and animation_mode(obj,item.mode)=='LEAVES' else .08
+    matrix=obj.matrix_world; inverse=matrix.to_3x3().inverted_safe()
+    t.nodes['World origin'].inputs[1].default_value=matrix.translation
+    for i,axis in enumerate('XYZ'):
+        t.nodes['World row '+axis].inputs[1].default_value=matrix[i][:3]
+        t.nodes['Inverse row '+axis].inputs[1].default_value=inverse[i][:]
+
+
+def remove_animation(scene,obj):
+    for mod in list(obj.modifiers):
+        if animation_owner(mod)==scene.mc_env.owner_id:
+            group=mod.node_group; obj.modifiers.remove(mod)
+            if group and group.users==0: bpy.data.node_groups.remove(group)
 
 
 @persistent

@@ -67,6 +67,36 @@ def color_grid(layout,p,keys):
         col.prop(p,key,text='')
 
 
+def animate_section(layout,scene):
+    p=scene.mc_env
+    section(layout,p,'animate','Animate','animate')
+    if not p.fold_animate: return
+    col=layout.column(align=True); col.enabled=p.animate
+    # Native English labels and left-aligned checkbox before its text (LTR).
+    for key in ('preview_day_cycle','texture_animate'):
+        row=col.row(align=True); row.use_property_split=False; row.alignment='LEFT'
+        row.prop(p,key)
+        if key=='preview_day_cycle' and p.preview_day_cycle: col.prop(p,'cycle_frames')
+        if key=='texture_animate':
+            sub=col.column(align=True); sub.enabled=p.texture_animate
+            sub.prop(p,'texture_fps')
+            sub.operator('mcenv.bind_atlas',text='Add Selected Texture Strips',icon='TEXTURE')
+    col.separator(); col.label(text='Objects',icon='OUTLINER_OB_MESH')
+    col.prop_search(p,'animation_candidate',scene,'objects',text='Object')
+    row=col.row(align=True)
+    row.operator('mcenv.animation_add',text='Add',icon='ADD')
+    row.operator('mcenv.animation_add',text='Add Selected').use_selected=True
+    for index,item in enumerate(p.animation_objects):
+        box=col.box(); box.use_property_split=False
+        row=box.row(align=True); row.prop(item,'enabled',text='')
+        row.label(text=item.object.name if item.object else 'Missing object',icon='MESH_DATA' if item.object else 'ERROR')
+        row.operator('mcenv.animation_remove',text='',icon='X').index=index
+        settings=box.column(align=True); settings.enabled=item.enabled and item.object is not None
+        settings.prop(item,'mode',text='Motion'); settings.prop(item,'influence')
+    col.label(text='Motion follows the Wind settings below.',icon='INFO')
+    if not p.wind: col.label(text='Enable Wind to move listed objects.',icon='INFO')
+
+
 class MCENV_PT_environment(bpy.types.Panel):
     bl_label='MCenv'
     bl_idname='MCENV_PT_environment'
@@ -124,16 +154,13 @@ class MCENV_PT_environment(bpy.types.Panel):
         advanced.label(text='Optional resource-pack colormaps:')
         field(advanced,p,'grass_colormap'); field(advanced,p,'foliage_colormap')
         field(advanced,p,'dry_foliage_colormap')
+        animate_section(layout,context.scene)
         section(layout,p,'wind','Wind','wind')
-        layout.prop(p,'texture_fps',text='Texture animation speed')
         layout.separator()
         row=layout.row(); row.prop(p,'fold_tools',text='Blender tools',icon='TRIA_DOWN' if p.fold_tools else 'TRIA_RIGHT',emboss=False)
         if p.fold_tools:
-            layout.prop(p,'preview_day_cycle')
-            if p.preview_day_cycle: layout.prop(p,'cycle_frames')
             layout.operator('mcenv.bind_wind',icon='MOD_WAVE'); layout.operator('mcenv.remove_wind')
             layout.prop(p,'tint_kind'); layout.operator('mcenv.bind_tint',icon='COLOR'); layout.operator('mcenv.remove_tint')
-            layout.operator('mcenv.bind_atlas',icon='TEXTURE')
             row=layout.row(align=True); row.operator('mcenv.import_preset',text='Import preset'); row.operator('mcenv.export_preset',text='Export preset')
             layout.label(text='Image files are saved with .blend, not presets.',icon='INFO')
             layout.operator('mcenv.reset',icon='LOOP_BACK')
