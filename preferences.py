@@ -76,7 +76,7 @@ class MCENV_Preferences(bpy.types.AddonPreferences):
     bl_idname = MODULE
 
     def draw(self, context):
-        self.layout.label(text='MCenv 0.8.0 · World Properties > MCenv')
+        self.layout.label(text='MCenv 0.9.0 · World Properties > MCenv')
         self.layout.label(text='Time and Rotation: right-click > Add to Quick Favorites.')
         self.layout.label(text='Quick Favorites are editor-specific in Blender.', icon='INFO')
         row = self.layout.row()
