@@ -101,7 +101,7 @@ class MCENV_OT_animation_add(bpy.types.Operator):
             engine.build_animation(scene,obj,mode)
             # Replace the old selected-object wind tool, never stack two sways.
             for mod in list(obj.modifiers):
-                if mod.get('mcenv_wind'):
+                if engine.mod_tag(mod,'mcenv_wind'):
                     group=mod.node_group; obj.modifiers.remove(mod)
                     if group and group.users==0: bpy.data.node_groups.remove(group)
             item=p.animation_objects.add(); item.object=obj; item.mode=mode
@@ -153,7 +153,7 @@ class MCENV_OT_unwind(bpy.types.Operator):
     def execute(self,context):
         for obj in context.selected_objects:
             for mod in list(obj.modifiers):
-                if mod.get('mcenv_wind'):
+                if engine.mod_tag(mod,'mcenv_wind'):
                     group=mod.node_group; obj.modifiers.remove(mod)
                     if group and group.users==0: bpy.data.node_groups.remove(group)
         return {'FINISHED'}

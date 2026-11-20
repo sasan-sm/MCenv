@@ -652,7 +652,7 @@ def update_bound(scene, seconds):
                 item=listed.get(obj.as_pointer())
                 update_animation(scene,obj,mod,item,seconds)
                 continue
-            if mod.type=='NODES' and mod.get('mcenv_wind') and mod.node_group:
+            if mod_tag(mod,'mcenv_wind'):
                 t=mod.node_group
                 t.nodes['Time'].outputs[0].default_value=seconds*p.wind_speed
                 t.nodes['Amplitude'].outputs[0].default_value=p.wind_strength if p.wind else 0
@@ -676,7 +676,7 @@ def update_bound(scene, seconds):
 
 
 def build_wind(obj):
-    existing=next((m for m in obj.modifiers if m.get('mcenv_wind')),None)
+    existing=next((m for m in obj.modifiers if mod_tag(m,'mcenv_wind')),None)
     if existing: return
     group=obj.vertex_groups.get('MCENV_Wind') or obj.vertex_groups.new(name='MCENV_Wind')
     zs=[v.co.z for v in obj.data.vertices]
@@ -703,15 +703,29 @@ def build_wind(obj):
     for n,trig in [(x,cos),(y,sin)]: link(t,trig,0,n,0); link(t,weighted,0,n,1)
     vec=node(t,'ShaderNodeCombineXYZ','Offset'); link(t,x,0,vec,'X'); link(t,y,0,vec,'Y')
     setpos=node(t,'GeometryNodeSetPosition','Sway'); link(t,inp,'Geometry',setpos,'Geometry'); link(t,vec,0,setpos,'Offset'); link(t,setpos,'Geometry',out,'Geometry')
-    mod=obj.modifiers.new('MCenv Wind','NODES'); mod.node_group=t; mod['mcenv_wind']=True
+    t['mcenv_wind']=True
+    mod=obj.modifiers.new('MCenv Wind','NODES'); mod.node_group=t
+
+
+def mod_tag(mod, key):
+    """Read an MCenv tag stored on a NODES modifier's node group.
+
+    Current Blender builds reject ID properties on modifiers entirely
+    (bpy_struct[key] and .get() raise TypeError), so tags live on the
+    node group, which keeps them across save/load. The guarded modifier
+    read only stays for scenes saved by older versions on Blender 4.x.
+    """
+    if mod.type=='NODES' and mod.node_group:
+        value=mod.node_group.get(key)
+        if value is not None: return value
+    try: return mod.get(key)
+    except TypeError: return None
 
 
 def animation_owner(mod):
-    # Geometry Nodes modifier ID properties that are not interface sockets can
-    # be discarded by Blender during save/load. The node-group tag is durable.
-    if mod.type=='NODES' and mod.node_group:
-        return mod.node_group.get('mcenv_animate_owner') or mod.get('mcenv_animate_owner')
-    return None
+    # The owner token lives on the node group (durable); modifiers may
+    # reject ID properties, so the modifier fallback is guarded.
+    return mod_tag(mod,'mcenv_animate_owner')
 
 
 def animation_mode(obj, mode):
@@ -819,8 +833,9 @@ def build_animation(scene, obj, mode='AUTO'):
         link(t,scale,0,dot,0); link(t,dot,'Value',local,axis)
     setpos=node(t,'GeometryNodeSetPosition','Sway')
     link(t,inp,'Geometry',setpos,'Geometry'); link(t,local,0,setpos,'Offset'); link(t,setpos,0,out,'Geometry')
+    # Modifiers reject ID properties in current Blender builds, so the
+    # owner token is only stored on the node group (tagged above).
     mod=obj.modifiers.new('MCenv Animate','NODES'); mod.node_group=t
-    mod['mcenv_animate_owner']=token
     return mod
 
 
