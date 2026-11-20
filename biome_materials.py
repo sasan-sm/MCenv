@@ -276,8 +276,8 @@ def prepare(material, settings, kind):
     tree = material.node_tree
     if kind == 'GRASS_SIDE':
         return prepare_side(material, settings)
-    # Migrate manual tint nodes from 1.0.0.x before re-adopting MCprep's
-    # original tint stage. Otherwise old multiply-on-multiply darkening survives.
+    # Reuse MCprep's original tint stage rather than stacking manual tint
+    # nodes, which would cause multiply-on-multiply darkening.
     for n in list(tree.nodes):
         if not n.get('mcenv_tint') or 'mcenv_baseline' in n: continue
         sockets=mix_sockets(n)

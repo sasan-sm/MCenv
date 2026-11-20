@@ -13,7 +13,7 @@ from . import assets
 _BUSY = set()
 _ERRORS = {}
 BRAND = 'MCenv'
-# Preserve data from version 1.0 without keeping the old display name.
+# Accept alternate internal data names without changing the displayed brand.
 LEGACY_BRAND = 'mc' + '-env'
 
 

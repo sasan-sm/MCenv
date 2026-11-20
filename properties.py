@@ -54,7 +54,7 @@ BIOMES = {
     'BADLANDS': ('Badlands', '90814d', '9e814d', '3f76e4'),
     'OCEAN': ('Ocean', '8eb971', '71a74d', '3f76e4'),
     'PALE_GARDEN': ('Pale Garden', '778272', '878d76', '3f76e4'),
-    # Append new presets here to preserve all 1.1.0 numeric enum IDs.
+    # Append presets to keep numeric enum IDs stable.
     'DAPPLED_FOREST': ('Dappled Forest', 'df6827', 'e68e30', '375154'),
     'CUSTOM': ('Custom', '91bd59', '77ab2f', '3f76e4'),
 }
@@ -81,7 +81,7 @@ CLIMATE = {
 }
 
 
-# Explicit values preserve enums saved by MCenv 1.0.0.x in existing .blend files.
+# Explicit numeric values keep biome selections stable in saved .blend files.
 _LEGACY_BIOMES = ['PLAINS','FOREST','BIRCH_FOREST','DARK_FOREST','TAIGA','SNOWY',
                   'DESERT','SAVANNA','JUNGLE','SWAMP','MANGROVE','BADLANDS','OCEAN','CUSTOM']
 _BIOME_IDS = {key:index for index,key in enumerate(_LEGACY_BIOMES)}
