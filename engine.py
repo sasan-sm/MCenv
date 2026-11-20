@@ -193,7 +193,7 @@ def world_setup(scene):
         link(t,coords,'Window',scale,0)
         link(t,scale,0,image,'Vector')
     t=w.node_tree
-    # Older versions painted stars with Voronoi nodes; real geometry stars replaced them.
+    # Remove obsolete procedural nodes; square stars now live in a directional World layer.
     for legacy in ('Stars','Star size','Sky height','Above horizon','Star mask','Star color'):
         n=t.nodes.get(legacy)
         if n: t.nodes.remove(n)
@@ -312,6 +312,35 @@ def celestial(scene, role, direction, scale, image, tilt):
     else:
         link(t,t.nodes['Sun sprite Blend'],0,blend,1)
         link(t,blend,0,t.nodes['Visible sky'],'Color')
+    # Only the star contribution is occluded: keep the original additive glow
+    # without a black sprite card. Vanilla's dark lunar core still blocks stars.
+    if not t.nodes.get(prefix+'Occlusion'):
+        sep=node(t,'ShaderNodeSeparateXYZ',prefix+'Core UV')
+        link(t,t.nodes[prefix+'UV'],0,sep,0)
+        inside=[]
+        for axis in ('X','Y'):
+            center=math_node(t,prefix+axis+' center','SUBTRACT',b=.5)
+            absolute=math_node(t,prefix+axis+' absolute','ABSOLUTE')
+            test=math_node(t,prefix+axis+' core','LESS_THAN',b=.125)
+            link(t,sep,axis,center,0); link(t,center,0,absolute,0); link(t,absolute,0,test,0)
+            inside.append(test)
+        core=math_node(t,prefix+'Core','MULTIPLY')
+        link(t,inside[0],0,core,0); link(t,inside[1],0,core,1)
+        brightness=node(t,'ShaderNodeRGBToBW',prefix+'Brightness')
+        link(t,t.nodes[prefix+'Texture'],'Color',brightness,0)
+        solid=math_node(t,prefix+'Solid pixels','GREATER_THAN',b=.05)
+        link(t,brightness,0,solid,0)
+        silhouette=math_node(t,prefix+'Silhouette','MAXIMUM')
+        link(t,core,0,silhouette,0); link(t,solid,0,silhouette,1)
+        mask=math_node(t,prefix+'Occlusion','MULTIPLY')
+        link(t,t.nodes[prefix+'Opacity'],0,mask,1)
+    mask=t.nodes[prefix+'Occlusion']
+    link(t,t.nodes[prefix+'Silhouette'] if additive else t.nodes[prefix+'Alpha'],0,mask,0)
+    # Alpha already contains visibility; multiplying twice would change fades.
+    if not additive:
+        for old in list(mask.inputs[1].links): t.links.remove(old)
+        mask.inputs[1].default_value=1
+    else: link(t,t.nodes[prefix+'Opacity'],0,mask,1)
     # Only remove obsolete MCenv-owned cards, never user objects.
     old=owned(scene,role)
     if old:
@@ -320,38 +349,115 @@ def celestial(scene, role, direction, scale, image, tilt):
         if mesh.users==0: bpy.data.meshes.remove(mesh)
 
 
+def star_directions(p):
+    """Stable seed and angular sizes from the original square-star geometry."""
+    rng=random.Random(20)
+    for _ in range(p.stars_count):
+        z=rng.uniform(.03,1); a=rng.uniform(0,math.tau)
+        r=math.sqrt(max(0,1-z*z))
+        d=Vector((math.cos(a)*r,math.sin(a)*r,z))
+        half=max(.1,1+p.stars_size_random*(rng.random()*2-1)*.8)*p.stars_size*70/900
+        yield d,half
+
+
+def star_map(scene):
+    """Bake tangent-plane squares to a packed directional mask, not a finite dome.
+
+    Only count/size/variation rebuild this image. Other controls update shader
+    values. The standard-library float array avoids millions of Python objects.
+    """
+    from array import array
+    p=scene.mc_env
+    signature=str(('directional-v1',p.stars_size,p.stars_count,p.stars_size_random))
+    image=next((im for im in bpy.data.images if im.get('mcenv_stars_owner')==p.owner_id),None)
+    if image and image.get('mcenv_stars_signature')==signature: return image
+    width,height=4096,2048
+    pixels=array('f',[0])*(width*height*4)
+    for d,half in star_directions(p):
+        longitude=math.atan2(d.y,d.x); latitude=math.asin(d.z)
+        # Bound by the angular radius of the square's circumscribed circle.
+        radius=math.atan(half*math.sqrt(2))
+        ymin=max(0,int((latitude-radius)/math.pi*height+height/2)-1)
+        ymax=min(height-1,int((latitude+radius)/math.pi*height+height/2)+1)
+        delta=math.asin(min(1,math.sin(radius)/max(1e-9,math.cos(latitude)))) if latitude+radius<math.pi/2 else math.pi
+        xmin=int((longitude-delta)/math.tau*width+width/2)-1
+        xmax=int((longitude+delta)/math.tau*width+width/2)+1
+        t1=d.cross(Vector((0,0,1))).normalized(); t2=t1.cross(d).normalized()
+        hits=0
+        for y in range(ymin,ymax+1):
+            phi=((y+.5)/height-.5)*math.pi; cp=math.cos(phi); sz=math.sin(phi)
+            for x in range(xmin,xmax+1):
+                theta=((x+.5)/width-.5)*math.tau
+                ray=(cp*math.cos(theta),cp*math.sin(theta),sz)
+                forward=sum(ray[j]*d[j] for j in range(3))
+                if forward<=0: continue
+                if all(abs(sum(ray[j]*axis[j] for j in range(3)))<=half*forward for axis in (t1,t2)):
+                    k=(y*width+x%width)*4
+                    pixels[k]=pixels[k+1]=pixels[k+2]=pixels[k+3]=1
+                    hits+=1
+        # Retain very small stars below one texel rather than dropping them.
+        if not hits:
+            x=int((longitude/math.tau+.5)*width)%width
+            y=min(height-1,int((latitude/math.pi+.5)*height))
+            k=(y*width+x)*4
+            pixels[k]=pixels[k+1]=pixels[k+2]=pixels[k+3]=1
+    if image is None:
+        image=bpy.data.images.new('MCenv '+p.owner_id+' Star mask',width=width,height=height,alpha=True)
+        image['mcenv_stars_owner']=p.owner_id
+    elif tuple(image.size)!=(width,height): image.scale(width,height)
+    image.colorspace_settings.name='Non-Color'
+    image.pixels.foreach_set(pixels); image.update(); image.pack()
+    image['mcenv_stars_signature']=signature
+    return image
+
+
 def stars_setup(scene, night):
-    """Real square-star dome over the whole sky; fades in at dusk, out at dawn."""
-    p=scene.mc_env; o=object_for(scene,'Stars')
-    sig=str((round(p.stars_size,3),p.stars_count,round(p.stars_size_random,3)))
-    if o.get('sig') != sig:
-        rng=random.Random(20); verts=[]; faces=[]
-        # Uniform directions over the full sky above the horizon (both hemispheres).
-        for i in range(p.stars_count):
-            z=rng.uniform(.03,1); a=rng.uniform(0,math.tau)
-            r=math.sqrt(max(0,1-z*z))
-            d=Vector((math.cos(a)*r,math.sin(a)*r,z))
-            # Exactly one size draw per star keeps positions stable while the
-            # random-size slider changes; 0 variation = every star identical.
-            s=max(.1,1+p.stars_size_random*(rng.random()*2-1)*.8)*p.stars_size*140
-            t1=d.cross(Vector((0,0,1)))
-            if t1.length<1e-4: t1=Vector((1,0,0))
-            t1.normalize(); t2=t1.cross(d).normalized()
-            c=d*900
-            for dx,dy in [(-1,-1),(1,-1),(1,1),(-1,1)]:
-                verts.append(tuple(c+t1*(s*.5*dx)+t2*(s*.5*dy)))
-            i0=len(verts)-4; faces.append((i0,i0+1,i0+2,i0+3))
-        o.data.clear_geometry(); o.data.from_pydata(verts,[],faces); o.data.update()
-        o['sig']=sig
-    o.location=scene.camera.matrix_world.translation if scene.camera else Vector((0,0,0))
-    o.rotation_euler=(0,0,math.radians(p.rotation))
-    o.hide_render=p.sky_mode!='MINECRAFT'; o.hide_viewport=o.hide_render
-    m=emission_mat(scene,'Stars'); put_mat(o,m); t=m.node_tree
-    em=t.nodes['Emission']
-    em.inputs[0].default_value=rgba(p.night_stars); em.inputs[1].default_value=p.stars_strength
-    t.nodes['Alpha'].inputs[0].default_value=night
-    m.use_backface_culling=False
-    if hasattr(m,'surface_render_method'): m.surface_render_method='DITHERED'
+    """Camera-only World stars, behind both celestial sprites and all geometry."""
+    p=scene.mc_env; t=scene.world.node_tree
+    if not t.nodes.get('Star blend'):
+        # World Normal points inward. Rotate the outgoing direction back into
+        # the unrotated star map, with no position/camera/clip-distance inputs.
+        negate=node(t,'ShaderNodeVectorMath','Star outgoing',operation='SCALE')
+        negate.inputs['Scale'].default_value=-1
+        link(t,t.nodes['Coordinates'],'Normal',negate,0)
+        rot=node(t,'ShaderNodeVectorRotate','Star rotation',rotation_type='AXIS_ANGLE')
+        rot.inputs['Axis'].default_value=(0,0,1); link(t,negate,0,rot,'Vector')
+        sep=node(t,'ShaderNodeSeparateXYZ','Star direction'); link(t,rot,0,sep,0)
+        longitude=math_node(t,'Star longitude','ARCTAN2')
+        link(t,sep,'Y',longitude,0); link(t,sep,'X',longitude,1)
+        latitude=math_node(t,'Star latitude','ARCSINE'); link(t,sep,'Z',latitude,0)
+        uv=node(t,'ShaderNodeCombineXYZ','Star UV')
+        for axis,source,scale in [('X',longitude,1/math.tau),('Y',latitude,1/math.pi)]:
+            n=math_node(t,'Star '+axis,'MULTIPLY_ADD',b=scale); n.inputs[2].default_value=.5
+            link(t,source,0,n,0); link(t,n,0,uv,axis)
+        tex=node(t,'ShaderNodeTexImage','Star texture mask',interpolation='Closest',extension='REPEAT')
+        link(t,uv,0,tex,'Vector')
+        occlusion=math_node(t,'Star celestial occlusion','MAXIMUM')
+        link(t,t.nodes['Sun sprite Occlusion'],0,occlusion,0)
+        link(t,t.nodes['Moon sprite Occlusion'],0,occlusion,1)
+        clear=math_node(t,'Star clear sky','SUBTRACT',a=1); link(t,occlusion,0,clear,1)
+        mask=math_node(t,'Star visibility','MULTIPLY')
+        link(t,tex,'Color',mask,0); link(t,clear,0,mask,1)
+        strength=math_node(t,'Star strength','MULTIPLY'); link(t,mask,0,strength,0)
+        color=node(t,'ShaderNodeMixRGB','Star tint',blend_type='MULTIPLY'); color.inputs[0].default_value=1
+        link(t,strength,0,color,1)
+        blend=node(t,'ShaderNodeMixRGB','Star blend',blend_type='ADD'); blend.inputs[0].default_value=1
+        link(t,color,0,blend,2)
+    t.nodes['Star texture mask'].image=star_map(scene)
+    t.nodes['Star rotation'].inputs['Angle'].default_value=-math.radians(p.rotation)
+    t.nodes['Star tint'].inputs[2].default_value=rgba(p.night_stars)
+    t.nodes['Star strength'].inputs[1].default_value=night*p.stars_strength if p.sky_mode=='MINECRAFT' else 0
+    # celestial() restored the selected base sky on the Sun input this update.
+    source=t.nodes['Sun sprite Blend'].inputs[1]; blend=t.nodes['Star blend']
+    if source.links: t.links.new(source.links[0].from_socket,blend.inputs[1])
+    else:
+        for old in list(blend.inputs[1].links): t.links.remove(old)
+        blend.inputs[1].default_value=source.default_value[:]
+    link(t,blend,0,t.nodes['Sun sprite Blend'],1)
+    old=owned(scene,'Stars')
+    if old:
+        mesh=old.data; bpy.data.objects.remove(old,do_unlink=True)
+        if mesh.users==0: bpy.data.meshes.remove(mesh)
 
 
 def ground_setup(scene):
