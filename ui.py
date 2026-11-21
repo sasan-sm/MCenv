@@ -173,8 +173,7 @@ class MCENV_PT_environment(bpy.types.Panel):
         field(box,p,'biome_atmosphere')
         animate_section(layout,context.scene)
         section(layout,p,'wind','Wind','wind')
-        layout.separator()
-        row=layout.row(); row.prop(p,'fold_tools',text='Blender tools',icon='TRIA_DOWN' if p.fold_tools else 'TRIA_RIGHT',emboss=False)
+        section(layout,p,'tools','Blender tools')
         if p.fold_tools:
             layout.operator('mcenv.bind_wind',icon='MOD_WAVE'); layout.operator('mcenv.remove_wind')
             geometry_section(layout,context.scene)
