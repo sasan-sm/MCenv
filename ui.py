@@ -97,6 +97,27 @@ def animate_section(layout,scene):
     if not p.wind: col.label(text='Enable Wind to move listed objects.',icon='INFO')
 
 
+def geometry_section(layout,scene):
+    p=scene.mc_env; col=layout.column(align=True)
+    col.label(text='Geometry',icon='MESH_DATA')
+    col.prop_search(p,'geometry_candidate',scene,'objects',text='Object')
+    row=col.row(align=True)
+    row.operator('mcenv.geometry_add',text='Add',icon='ADD')
+    row.operator('mcenv.geometry_add',text='Add Selected').use_selected=True
+    for index,item in enumerate(p.geometry_objects):
+        box=col.box(); box.use_property_split=False; box.use_property_decorate=False
+        row=box.row(align=True)
+        row.prop(item,'enabled',text='')
+        row.label(text=item.object.name if item.object else 'Missing object',icon='MESH_DATA' if item.object else 'ERROR')
+        row.operator('mcenv.geometry_remove',text='',icon='X').index=index
+        settings=box.column(align=True); settings.enabled=item.enabled and item.object is not None
+        row=settings.row(align=True)
+        row.prop(item,'wireframe',text='Wireframe',slider=True)
+        row.prop(item,'opacity',text='Opacity',slider=True)
+        settings.prop(item,'thickness')
+    col.label(text='Listed meshes only; visible in final renders.',icon='INFO')
+
+
 class MCENV_PT_environment(bpy.types.Panel):
     bl_label='MCenv'
     bl_idname='MCENV_PT_environment'
@@ -162,7 +183,7 @@ class MCENV_PT_environment(bpy.types.Panel):
         row=layout.row(); row.prop(p,'fold_tools',text='Blender tools',icon='TRIA_DOWN' if p.fold_tools else 'TRIA_RIGHT',emboss=False)
         if p.fold_tools:
             layout.operator('mcenv.bind_wind',icon='MOD_WAVE'); layout.operator('mcenv.remove_wind')
-            layout.prop(p,'tint_kind'); layout.operator('mcenv.bind_tint',icon='COLOR'); layout.operator('mcenv.remove_tint')
+            geometry_section(layout,context.scene)
             row=layout.row(align=True); row.operator('mcenv.import_preset',text='Import preset'); row.operator('mcenv.export_preset',text='Export preset')
             layout.label(text='Image files are saved with .blend, not presets.',icon='INFO')
             layout.operator('mcenv.reset',icon='LOOP_BACK')

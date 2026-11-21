@@ -634,8 +634,114 @@ def fog_setup(scene, sky):
     t.nodes['Volume'].inputs['Color'].default_value=rgba(p.fog_object_color if p.fog_custom_object else sky)
 
 
+def geometry_modifier(scene,obj):
+    return next((m for m in obj.modifiers if mod_tag(m,'mcenv_geometry_owner')==scene.mc_env.owner_id),None)
+
+
+def build_geometry(scene,obj):
+    """Join edge tubes to the untouched input; no material edits on the source mesh."""
+    existing=geometry_modifier(scene,obj)
+    if existing: return existing
+    t=bpy.data.node_groups.new('MCenv Geometry • '+obj.name,'GeometryNodeTree')
+    t['mcenv_geometry_owner']=owner(scene)
+    t.interface.new_socket(name='Geometry',in_out='INPUT',socket_type='NodeSocketGeometry')
+    t.interface.new_socket(name='Geometry',in_out='OUTPUT',socket_type='NodeSocketGeometry')
+    inp=node(t,'NodeGroupInput','Input'); out=node(t,'NodeGroupOutput','Output')
+    realize=node(t,'GeometryNodeRealizeInstances','Realize for edges')
+    link(t,inp,'Geometry',realize,'Geometry')
+    angle=node(t,'GeometryNodeInputMeshEdgeAngle','Edge angle')
+    # Blender 4.2 extract_mesh_vbo_edge_fac.cc + overlay_wireframe.cc:
+    # quantized clamp(200 * (dot(face normals) - 1) + 1), compared to sqrt(slider).
+    cosine=math_node(t,'Edge cosine','COSINE'); link(t,angle,'Unsigned Angle',cosine,0)
+    factor=math_node(t,'Edge factor','MULTIPLY_ADD',b=200); factor.inputs[2].default_value=-199
+    factor.use_clamp=True; link(t,cosine,0,factor,0)
+    quantize=math_node(t,'Edge quantize','MULTIPLY',b=254); link(t,factor,0,quantize,0)
+    floor=math_node(t,'Edge byte','FLOOR'); link(t,quantize,0,floor,0)
+    normalized=math_node(t,'Edge normalized','DIVIDE',b=254); link(t,floor,0,normalized,0)
+    threshold=math_node(t,'Edge visibility','LESS_THAN')
+    link(t,normalized,0,threshold,0)
+    neighbors=node(t,'GeometryNodeInputMeshEdgeNeighbors','Edge neighbors')
+    boundary=math_node(t,'Boundary and loose edges','COMPARE',b=2)
+    boundary.inputs[2].default_value=.1; link(t,neighbors,'Face Count',boundary,0)
+    invert=math_node(t,'Open edges','SUBTRACT',a=1); link(t,boundary,0,invert,1)
+    selected=math_node(t,'Visible edges','MAXIMUM')
+    link(t,threshold,0,selected,0); link(t,invert,0,selected,1)
+    curves=node(t,'GeometryNodeMeshToCurve','Mesh edges')
+    link(t,realize,'Geometry',curves,'Mesh'); link(t,selected,0,curves,'Selection')
+    profile=node(t,'GeometryNodeCurvePrimitiveCircle','Line profile',mode='RADIUS')
+    profile.inputs['Resolution'].default_value=4
+    tubes=node(t,'GeometryNodeCurveToMesh','Renderable edges')
+    link(t,curves,'Curve',tubes,'Curve'); link(t,profile,'Curve',tubes,'Profile Curve')
+    tubes.inputs['Fill Caps'].default_value=True
+    shade=node(t,'GeometryNodeSetMaterial','Line material')
+    link(t,tubes,'Mesh',shade,'Geometry')
+    join=node(t,'GeometryNodeJoinGeometry','Original plus edges')
+    link(t,inp,'Geometry',join,'Geometry'); link(t,shade,'Geometry',join,'Geometry')
+    link(t,join,'Geometry',out,'Geometry')
+    mod=obj.modifiers.new('MCenv Geometry','NODES'); mod.node_group=t
+    return mod
+
+
+def geometry_material(scene,item):
+    m=item.material
+    if m is None or m.get('mcenv_geometry_owner')!=scene.mc_env.owner_id:
+        m=bpy.data.materials.new('MCenv Wire • '+item.object.name)
+        m.use_nodes=True; m['mcenv_geometry_owner']=scene.mc_env.owner_id
+        t=m.node_tree; t.nodes.clear()
+        out=node(t,'ShaderNodeOutputMaterial','Output')
+        transparent=node(t,'ShaderNodeBsdfTransparent','Transparent')
+        line=node(t,'ShaderNodeEmission','Line'); line.inputs['Color'].default_value=(0,0,0,1)
+        alpha=node(t,'ShaderNodeMixShader','Opacity')
+        link(t,transparent,0,alpha,1); link(t,line,0,alpha,2); link(t,alpha,0,out,'Surface')
+        item.material=m
+    m.node_tree.nodes['Opacity'].inputs[0].default_value=item.opacity
+    m.diffuse_color=(0,0,0,item.opacity)
+    if hasattr(m,'surface_render_method'): m.surface_render_method='DITHERED'
+    elif hasattr(m,'blend_method'): m.blend_method='HASHED'
+    return m
+
+
+def sync_geometry(scene):
+    if not hasattr(scene,'mc_env'): return
+    p=scene.mc_env
+    if not p.geometry_objects: return
+    owner(scene)
+    for item in p.geometry_objects:
+        obj=item.object
+        if not obj or obj.type!='MESH' or obj.library or obj.override_library or len(obj.users_scene)>1: continue
+        if obj.name not in scene.objects: continue
+        mod=geometry_modifier(scene,obj)
+        if mod is None: continue  # Only Add creates modifiers; removal is never silently undone.
+        active=item.enabled and item.opacity>0
+        mod.show_viewport=active; mod.show_render=active
+        t=mod.node_group
+        # 1 includes flat edges; smaller values increasingly suppress near-flat edges.
+        t.nodes['Edge visibility'].inputs[1].default_value=math.sqrt(item.wireframe)+.0000001
+        t.nodes['Line profile'].inputs['Radius'].default_value=item.thickness/2
+        t.nodes['Line material'].inputs['Material'].default_value=geometry_material(scene,item)
+        # Always evaluate after deformation, including Wind added after Geometry.
+        index=obj.modifiers.find(mod.name)
+        if index!=len(obj.modifiers)-1: obj.modifiers.move(index,len(obj.modifiers)-1)
+
+
+def remove_geometry(scene,item):
+    obj=item.object; mat=item.material; group=item.node_group
+    if obj:
+        for mod in list(obj.modifiers):
+            if mod_tag(mod,'mcenv_geometry_owner')==scene.mc_env.owner_id:
+                obj.modifiers.remove(mod)
+    item.node_group=None
+    if group and group.get('mcenv_geometry_owner')==scene.mc_env.owner_id and group.users==0:
+        bpy.data.node_groups.remove(group)
+    item.material=None
+    if mat and mat.get('mcenv_geometry_owner')==scene.mc_env.owner_id and mat.users==0:
+        bpy.data.materials.remove(mat)
+
+
 def sync(scene):
-    if not hasattr(scene,'mc_env') or not scene.mc_env.enabled: return
+    if not hasattr(scene,'mc_env'): return
+    sync_geometry(scene)
+    if not scene.mc_env.enabled: return
     ptr=scene.as_pointer()
     if ptr in _BUSY: return
     _BUSY.add(ptr)

@@ -226,7 +226,29 @@ class MCENV_AnimationObject(bpy.types.PropertyGroup):
     influence: FloatProperty(name='Influence', default=1, min=0, soft_max=3, update=animation_update)
 
 
+def geometry_poll(self, obj):
+    return obj.type == 'MESH' and not obj.get('mcenv_owner')
+
+
+def geometry_update(self, context):
+    from .engine import sync_geometry
+    scene=self.id_data
+    if isinstance(scene,bpy.types.Scene): sync_geometry(scene)
+
+
+class MCENV_GeometryObject(bpy.types.PropertyGroup):
+    object: PointerProperty(type=bpy.types.Object)
+    material: PointerProperty(type=bpy.types.Material, options={'HIDDEN'})
+    node_group: PointerProperty(type=bpy.types.NodeTree, options={'HIDDEN'})
+    enabled: BoolProperty(name='Wireframe enabled', default=True, update=geometry_update)
+    wireframe: FloatProperty(name='Wireframe', description='Edge visibility: lower values hide near-flat edges; 1 shows all mesh edges (not line thickness)', default=1, min=0, max=1, update=geometry_update)
+    opacity: FloatProperty(name='Opacity', description='Rendered line opacity; 0 is invisible, 1 is opaque', default=.5, min=0, max=1, subtype='FACTOR', update=geometry_update)
+    thickness: FloatProperty(name='Thickness', description='Rendered line diameter in object-local units; object scale also scales the lines', default=.01, min=.00001, soft_max=.1, precision=4, subtype='DISTANCE', update=geometry_update)
+
+
 class MCENV_Settings(bpy.types.PropertyGroup):
+    geometry_objects: CollectionProperty(type=MCENV_GeometryObject)
+    geometry_candidate: PointerProperty(name='Object', type=bpy.types.Object, poll=geometry_poll, description='Choose a mesh and Add it to the renderable wireframe list')
     animation_objects: CollectionProperty(type=MCENV_AnimationObject)
     animation_candidate: PointerProperty(name='Object', type=bpy.types.Object, description='Choose a mesh in this scene and press Add, or use Add Selected')
     animate: BoolProperty(name='Animate', description='Enable day-cycle, opted-in texture and listed-object animation', default=True, update=update)
@@ -338,6 +360,7 @@ class MCENV_Settings(bpy.types.PropertyGroup):
 def register():
     bpy.utils.register_class(MCENV_MaterialBinding)
     bpy.utils.register_class(MCENV_AnimationObject)
+    bpy.utils.register_class(MCENV_GeometryObject)
     bpy.utils.register_class(MCENV_Settings)
     bpy.types.Scene.mc_env = PointerProperty(type=MCENV_Settings)
 
@@ -345,5 +368,6 @@ def register():
 def unregister():
     del bpy.types.Scene.mc_env
     bpy.utils.unregister_class(MCENV_Settings)
+    bpy.utils.unregister_class(MCENV_GeometryObject)
     bpy.utils.unregister_class(MCENV_AnimationObject)
     bpy.utils.unregister_class(MCENV_MaterialBinding)

@@ -80,6 +80,47 @@ class MCENV_OT_image(bpy.types.Operator,ImportHelper):
         return {'FINISHED'}
 
 
+class MCENV_OT_geometry_add(bpy.types.Operator):
+    bl_idname='mcenv.geometry_add'
+    bl_label='Add Geometry'
+    bl_description='Add only the chosen or selected meshes to the renderable wireframe list'
+    bl_options={'REGISTER','UNDO'}
+    use_selected: BoolProperty(default=False,options={'HIDDEN','SKIP_SAVE'})
+
+    def execute(self,context):
+        scene=context.scene; p=scene.mc_env
+        candidates=list(context.selected_objects) if self.use_selected or not p.geometry_candidate else [p.geometry_candidate]
+        existing={item.object for item in p.geometry_objects if item.object}
+        count=0; skipped=0
+        for obj in candidates:
+            if obj in existing: continue
+            if (obj.type!='MESH' or obj.get('mcenv_owner') or obj.library or obj.override_library
+                    or obj.data.library or obj.mode!='OBJECT' or len(obj.users_scene)>1
+                    or obj.name not in scene.objects):
+                skipped+=1; continue
+            mod=engine.build_geometry(scene,obj)
+            item=p.geometry_objects.add(); item.object=obj; item.node_group=mod.node_group
+            existing.add(obj); count+=1
+        engine.sync_geometry(scene)
+        self.report({'INFO'} if count else {'WARNING'},f'Added {count} meshes; {skipped} unsupported objects skipped. Duplicates are not added.')
+        return {'FINISHED'} if count else {'CANCELLED'}
+
+
+class MCENV_OT_geometry_remove(bpy.types.Operator):
+    bl_idname='mcenv.geometry_remove'
+    bl_label='Remove Geometry'
+    bl_description='Remove only the MCenv wireframe effect and list entry; preserve the original object'
+    bl_options={'REGISTER','UNDO'}
+    index: IntProperty(default=-1)
+
+    def execute(self,context):
+        p=context.scene.mc_env
+        if not 0<=self.index<len(p.geometry_objects): return {'CANCELLED'}
+        engine.remove_geometry(context.scene,p.geometry_objects[self.index])
+        p.geometry_objects.remove(self.index)
+        return {'FINISHED'}
+
+
 class MCENV_OT_animation_add(bpy.types.Operator):
     bl_idname='mcenv.animation_add'
     bl_label='Add'
@@ -366,7 +407,7 @@ class MCENV_OT_reset(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_image,MCENV_OT_animation_add,MCENV_OT_animation_remove,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_detect_biome,MCENV_OT_restore_biome,MCENV_OT_custom_biome,MCENV_OT_tint,MCENV_OT_untint,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
+CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_image,MCENV_OT_geometry_add,MCENV_OT_geometry_remove,MCENV_OT_animation_add,MCENV_OT_animation_remove,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_detect_biome,MCENV_OT_restore_biome,MCENV_OT_custom_biome,MCENV_OT_tint,MCENV_OT_untint,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
 
 
 def register():
