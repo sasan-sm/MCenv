@@ -100,22 +100,20 @@ def animate_section(layout,scene):
 def geometry_section(layout,scene):
     p=scene.mc_env; col=layout.column(align=True)
     col.label(text='Geometry',icon='MESH_DATA')
-    col.prop_search(p,'geometry_candidate',scene,'objects',text='Object')
+    col.use_property_split=False; col.use_property_decorate=False
     row=col.row(align=True)
-    row.operator('mcenv.geometry_add',text='Add',icon='ADD')
-    row.operator('mcenv.geometry_add',text='Add Selected').use_selected=True
-    for index,item in enumerate(p.geometry_objects):
-        box=col.box(); box.use_property_split=False; box.use_property_decorate=False
-        row=box.row(align=True)
-        row.prop(item,'enabled',text='')
-        row.label(text=item.object.name if item.object else 'Missing object',icon='MESH_DATA' if item.object else 'ERROR')
-        row.operator('mcenv.geometry_remove',text='',icon='X').index=index
-        settings=box.column(align=True); settings.enabled=item.enabled and item.object is not None
-        row=settings.row(align=True)
-        row.prop(item,'wireframe',text='Wireframe',slider=True)
-        row.prop(item,'opacity',text='Opacity',slider=True)
-        settings.prop(item,'thickness')
-    col.label(text='Listed meshes only; visible in final renders.',icon='INFO')
+    row.operator('mcenv.geometry_add',text='Add')
+    row.operator('mcenv.geometry_remove',text='Remove')
+    row=col.row(align=True)
+    row.prop(p,'geometry_enabled',text='')
+    settings=row.row(align=True); settings.enabled=p.geometry_enabled
+    settings.prop(p,'geometry_wireframe',text='Wireframe',slider=True)
+    settings.prop(p,'geometry_opacity',text='Opacity',slider=True)
+    settings=col.column(align=True); settings.enabled=p.geometry_enabled
+    settings.prop(p,'geometry_thickness',text='Thickness')
+    settings.prop(p,'geometry_color',text='Edge Color')
+    col.label(text='Added meshes only; visible in final renders.',icon='INFO')
+    col.label(text='Targets: '+str(sum(bool(item.object) for item in p.geometry_objects)))
 
 
 class MCENV_PT_environment(bpy.types.Panel):

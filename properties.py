@@ -230,9 +230,10 @@ def geometry_poll(self, obj):
 
 
 def geometry_update(self, context):
-    from .engine import sync_geometry
+    from .engine import sync_geometry, _BUSY
     scene=self.id_data
-    if isinstance(scene,bpy.types.Scene): sync_geometry(scene)
+    if (isinstance(scene,bpy.types.Scene) and scene.as_pointer() not in _BUSY
+            and not scene.mc_env.geometry_migrating): sync_geometry(scene)
 
 
 class MCENV_GeometryObject(bpy.types.PropertyGroup):
@@ -247,7 +248,17 @@ class MCENV_GeometryObject(bpy.types.PropertyGroup):
 
 class MCENV_Settings(bpy.types.PropertyGroup):
     geometry_objects: CollectionProperty(type=MCENV_GeometryObject)
-    geometry_candidate: PointerProperty(name='Object', type=bpy.types.Object, poll=geometry_poll, description='Choose a mesh and Add it to the renderable wireframe list')
+    # Keep the old picker/item settings readable for existing .blend files only.
+    geometry_candidate: PointerProperty(name='Object', type=bpy.types.Object, poll=geometry_poll, options={'HIDDEN'})
+    geometry_enabled: BoolProperty(name='Wireframe enabled', default=True, options=set(), update=geometry_update)
+    geometry_wireframe: FloatProperty(name='Wireframe', description='Edge visibility, not thickness; 1 includes flat mesh edges, lower values suppress near-flat edges', default=1, min=0, max=1, options=set(), update=geometry_update)
+    geometry_opacity: FloatProperty(name='Opacity', description='Shared line opacity; 1 is opaque and cheapest to render', default=.5, min=0, max=1, subtype='FACTOR', options=set(), update=geometry_update)
+    geometry_thickness: FloatProperty(name='Thickness', description='Shared line diameter in object-local units, not pixels; start with 0.002 for one-unit blocks. Object scale also scales lines', default=.002, min=.00001, soft_max=.02, precision=4, subtype='DISTANCE', options=set(), update=geometry_update)
+    geometry_color: FloatVectorProperty(name='Edge Color', description='One color for all added edges; original materials stay untouched', subtype='COLOR', size=3, min=0, max=1, default=(0,0,0), options=set(), update=geometry_update)
+    geometry_group: PointerProperty(type=bpy.types.NodeTree, options={'HIDDEN'})
+    geometry_line_material: PointerProperty(type=bpy.types.Material, options={'HIDDEN'})
+    geometry_migrated: BoolProperty(default=False, options={'HIDDEN'})
+    geometry_migrating: BoolProperty(default=False, options={'HIDDEN','SKIP_SAVE'})
     animation_objects: CollectionProperty(type=MCENV_AnimationObject)
     animation_candidate: PointerProperty(name='Object', type=bpy.types.Object, description='Choose a mesh in this scene and press Add, or use Add Selected')
     animate: BoolProperty(name='Animate', description='Enable day-cycle, opted-in texture and listed-object animation', default=True, update=update)

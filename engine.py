@@ -617,20 +617,31 @@ def geometry_modifier(scene,obj):
     return next((m for m in obj.modifiers if mod_tag(m,'mcenv_geometry_owner')==scene.mc_env.owner_id),None)
 
 
-def build_geometry(scene,obj):
-    """Join edge tubes to the untouched input; no material edits on the source mesh."""
-    existing=geometry_modifier(scene,obj)
-    if existing: return existing
-    t=bpy.data.node_groups.new('MCenv Geometry • '+obj.name,'GeometryNodeTree')
+def geometry_group(scene):
+    """One shared edge-only graph per scene; source faces/materials pass through.
+
+    Operate on the evaluated mesh component without realizing instances. Realizing
+    a forest can expand millions of faces just to draw a few outlines. Instances
+    remain untouched (apply Geometry to their source mesh instead).
+    """
+    p=scene.mc_env; t=p.geometry_group
+    if (t and t.get('mcenv_geometry_owner')==owner(scene)
+            and t.get('mcenv_geometry_scene')==scene and t.get('mcenv_geometry_schema')==2):
+        return t
+    t=bpy.data.node_groups.new('MCenv Geometry • '+owner(scene),'GeometryNodeTree')
     t['mcenv_geometry_owner']=owner(scene)
+    t['mcenv_geometry_schema']=2  # Internal graph schema, NOT the addon version.
+    t['mcenv_geometry_scene']=scene
     t.interface.new_socket(name='Geometry',in_out='INPUT',socket_type='NodeSocketGeometry')
     t.interface.new_socket(name='Geometry',in_out='OUTPUT',socket_type='NodeSocketGeometry')
     inp=node(t,'NodeGroupInput','Input'); out=node(t,'NodeGroupOutput','Output')
-    realize=node(t,'GeometryNodeRealizeInstances','Realize for edges')
-    link(t,inp,'Geometry',realize,'Geometry')
+    # Weld only the edge-extraction branch: imported block faces often have
+    # disconnected but coincident vertices/edges. Never weld the source output.
+    weld=node(t,'GeometryNodeMergeByDistance','Weld edge copy')
+    weld.inputs['Distance'].default_value=.000001
+    link(t,inp,'Geometry',weld,'Geometry')
     angle=node(t,'GeometryNodeInputMeshEdgeAngle','Edge angle')
-    # Blender 4.2 extract_mesh_vbo_edge_fac.cc + overlay_wireframe.cc:
-    # quantized clamp(200 * (dot(face normals) - 1) + 1), compared to sqrt(slider).
+    # Blender 4.2 overlay-style edge threshold, not shader triangle wireframe.
     cosine=math_node(t,'Edge cosine','COSINE'); link(t,angle,'Unsigned Angle',cosine,0)
     factor=math_node(t,'Edge factor','MULTIPLY_ADD',b=200); factor.inputs[2].default_value=-199
     factor.use_clamp=True; link(t,cosine,0,factor,0)
@@ -646,9 +657,9 @@ def build_geometry(scene,obj):
     selected=math_node(t,'Visible edges','MAXIMUM')
     link(t,threshold,0,selected,0); link(t,invert,0,selected,1)
     curves=node(t,'GeometryNodeMeshToCurve','Mesh edges')
-    link(t,realize,'Geometry',curves,'Mesh'); link(t,selected,0,curves,'Selection')
+    link(t,weld,'Geometry',curves,'Mesh'); link(t,selected,0,curves,'Selection')
     profile=node(t,'GeometryNodeCurvePrimitiveCircle','Line profile',mode='RADIUS')
-    profile.inputs['Resolution'].default_value=4
+    profile.inputs['Resolution'].default_value=3  # Smallest renderable tube profile.
     tubes=node(t,'GeometryNodeCurveToMesh','Renderable edges')
     link(t,curves,'Curve',tubes,'Curve'); link(t,profile,'Curve',tubes,'Profile Curve')
     tubes.inputs['Fill Caps'].default_value=True
@@ -657,50 +668,112 @@ def build_geometry(scene,obj):
     join=node(t,'GeometryNodeJoinGeometry','Original plus edges')
     link(t,inp,'Geometry',join,'Geometry'); link(t,shade,'Geometry',join,'Geometry')
     link(t,join,'Geometry',out,'Geometry')
-    mod=obj.modifiers.new('MCenv Geometry','NODES'); mod.node_group=t
+    p.geometry_group=t
+    return t
+
+
+def build_geometry(scene,obj):
+    mod=geometry_modifier(scene,obj)
+    if mod is None: mod=obj.modifiers.new('MCenv Geometry','NODES')
+    mod.node_group=geometry_group(scene)
     return mod
 
 
-def geometry_material(scene,item):
-    m=item.material
-    if m is None or m.get('mcenv_geometry_owner')!=scene.mc_env.owner_id:
-        m=bpy.data.materials.new('MCenv Wire • '+item.object.name)
-        m.use_nodes=True; m['mcenv_geometry_owner']=scene.mc_env.owner_id
+def geometry_default(socket,value):
+    """Avoid tagging every target's depsgraph when an unrelated setting changes."""
+    current=socket.default_value
+    if isinstance(value,(tuple,list)):
+        changed=tuple(current)!=tuple(value)
+    elif isinstance(value,(int,float)):
+        changed=not math.isclose(current,value,rel_tol=1e-7,abs_tol=1e-10)
+    else: changed=current!=value
+    if changed: socket.default_value=value
+
+
+def geometry_material(scene):
+    p=scene.mc_env; m=p.geometry_line_material
+    if (m is None or m.get('mcenv_geometry_owner')!=p.owner_id
+            or m.get('mcenv_geometry_scene')!=scene):
+        m=bpy.data.materials.new('MCenv Wire • '+p.owner_id)
+        m.use_nodes=True; m['mcenv_geometry_owner']=p.owner_id
+        m['mcenv_geometry_scene']=scene
         t=m.node_tree; t.nodes.clear()
         out=node(t,'ShaderNodeOutputMaterial','Output')
         transparent=node(t,'ShaderNodeBsdfTransparent','Transparent')
-        line=node(t,'ShaderNodeEmission','Line'); line.inputs['Color'].default_value=(0,0,0,1)
+        line=node(t,'ShaderNodeEmission','Line')
         alpha=node(t,'ShaderNodeMixShader','Opacity')
-        link(t,transparent,0,alpha,1); link(t,line,0,alpha,2); link(t,alpha,0,out,'Surface')
-        item.material=m
-    m.node_tree.nodes['Opacity'].inputs[0].default_value=item.opacity
-    m.diffuse_color=(0,0,0,item.opacity)
-    if hasattr(m,'surface_render_method'): m.surface_render_method='DITHERED'
-    elif hasattr(m,'blend_method'): m.blend_method='HASHED'
+        link(t,transparent,0,alpha,1); link(t,line,0,alpha,2)
+        p.geometry_line_material=m
+    t=m.node_tree
+    color=(*p.geometry_color,1)
+    geometry_default(t.nodes['Line'].inputs['Color'],color)
+    geometry_default(t.nodes['Opacity'].inputs[0],p.geometry_opacity)
+    # Opaque lines bypass the transparent shader entirely (recommended for leaves).
+    surface=t.nodes['Output'].inputs['Surface']
+    source=t.nodes['Line' if p.geometry_opacity>=1 else 'Opacity']
+    if not surface.links or surface.links[0].from_node!=source:
+        link(t,source,0,t.nodes['Output'],'Surface')
+    diffuse=(*p.geometry_color,p.geometry_opacity)
+    if tuple(m.diffuse_color)!=diffuse: m.diffuse_color=diffuse
+    if hasattr(m,'surface_render_method'):
+        if m.surface_render_method!='DITHERED': m.surface_render_method='DITHERED'
+    elif hasattr(m,'blend_method'):
+        blend='HASHED' if p.geometry_opacity<1 else 'OPAQUE'
+        if m.blend_method!=blend: m.blend_method=blend
     return m
 
 
+def migrate_geometry_settings(scene):
+    """Read legacy 1.0.0 lists once; retain targets and use the first target's style."""
+    p=scene.mc_env
+    if p.geometry_migrated: return
+    p.geometry_migrating=True
+    try:
+        if p.geometry_objects:
+            first=p.geometry_objects[0]
+            for key,value in [('geometry_enabled',first.enabled),('geometry_wireframe',first.wireframe),
+                              ('geometry_opacity',first.opacity),('geometry_thickness',first.thickness)]:
+                if not p.is_property_set(key): setattr(p,key,value)
+        p.geometry_migrated=True
+    finally: p.geometry_migrating=False
+
+
 def sync_geometry(scene):
+    """Called on explicit edits/load, never from a render/frame-change callback."""
     if not hasattr(scene,'mc_env'): return
     p=scene.mc_env
+    migrate_geometry_settings(scene)
     if not p.geometry_objects: return
     owner(scene)
+    group=geometry_group(scene); material=geometry_material(scene)
+    geometry_default(group.nodes['Edge visibility'].inputs[1],math.sqrt(p.geometry_wireframe)+.0000001)
+    geometry_default(group.nodes['Line profile'].inputs['Radius'],p.geometry_thickness/2)
+    geometry_default(group.nodes['Line material'].inputs['Material'],material)
+    old_groups=set(); old_materials=set()
+    active=p.geometry_enabled and p.geometry_opacity>0
     for item in p.geometry_objects:
         obj=item.object
         if not obj or obj.type!='MESH' or obj.library or obj.override_library or len(obj.users_scene)>1: continue
         if obj.name not in scene.objects: continue
         mod=geometry_modifier(scene,obj)
         if mod is None: continue  # Only Add creates modifiers; removal is never silently undone.
-        active=item.enabled and item.opacity>0
-        mod.show_viewport=active; mod.show_render=active
-        t=mod.node_group
-        # 1 includes flat edges; smaller values increasingly suppress near-flat edges.
-        t.nodes['Edge visibility'].inputs[1].default_value=math.sqrt(item.wireframe)+.0000001
-        t.nodes['Line profile'].inputs['Radius'].default_value=item.thickness/2
-        t.nodes['Line material'].inputs['Material'].default_value=geometry_material(scene,item)
-        # Always evaluate after deformation, including Wind added after Geometry.
+        if mod.node_group!=group:
+            old_groups.add(mod.node_group); mod.node_group=group
+        if item.node_group and item.node_group!=group: old_groups.add(item.node_group)
+        if item.material and item.material!=material: old_materials.add(item.material)
+        if item.node_group!=group: item.node_group=group
+        if item.material!=material: item.material=material
+        if mod.show_viewport!=active: mod.show_viewport=active
+        if mod.show_render!=active: mod.show_render=active
+        # Explicit edits, not frames, keep edges after wind/deformation modifiers.
         index=obj.modifiers.find(mod.name)
         if index!=len(obj.modifiers)-1: obj.modifiers.move(index,len(obj.modifiers)-1)
+    for old in old_groups:
+        if old and old.get('mcenv_geometry_owner')==p.owner_id and old.users==0:
+            bpy.data.node_groups.remove(old)
+    for old in old_materials:
+        if old and old.get('mcenv_geometry_owner')==p.owner_id and old.users==0:
+            bpy.data.materials.remove(old)
 
 
 def remove_geometry(scene,item):
@@ -717,9 +790,9 @@ def remove_geometry(scene,item):
         bpy.data.materials.remove(mat)
 
 
-def sync(scene):
+def sync(scene, *, include_geometry=True):
     if not hasattr(scene,'mc_env'): return
-    sync_geometry(scene)
+    if include_geometry: sync_geometry(scene)
     if not scene.mc_env.enabled: return
     ptr=scene.as_pointer()
     if ptr in _BUSY: return
@@ -1006,7 +1079,9 @@ def remove_animation(scene,obj):
 
 @persistent
 def frame_update(scene, *args):
-    sync(scene)
+    # Geometry settings are static. Do not rewrite edge node trees/materials or
+    # reorder modifiers while the viewport/render depsgraph is evaluating them.
+    sync(scene,include_geometry=False)
 
 
 @persistent
@@ -1017,6 +1092,8 @@ def load_update(*args):
 def register():
     if frame_update not in bpy.app.handlers.frame_change_post: bpy.app.handlers.frame_change_post.append(frame_update)
     if load_update not in bpy.app.handlers.load_post: bpy.app.handlers.load_post.append(load_update)
+    # Also migrate when enabling the updated addon with an old file already open.
+    for scene in bpy.data.scenes: sync_geometry(scene)
 
 
 def unregister():
