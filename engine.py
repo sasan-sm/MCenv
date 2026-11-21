@@ -7,7 +7,7 @@ import colorsys
 import bpy
 from mathutils import Vector
 from bpy.app.handlers import persistent
-from .properties import BIOMES, CLIMATE, DRY_FOLIAGE, rgb, linear
+from .properties import BIOMES, CLIMATE, DRY_FOLIAGE, NETHER_FOG, rgb, linear
 from . import assets
 
 _BUSY = set()
@@ -163,6 +163,53 @@ def biome_sky(p):
     return tuple(linear(v) for v in colorsys.hsv_to_rgb(.6222222-t*.05,.5+t*.1,1))
 
 
+def dimension_fog(p):
+    if p.dimension == 'NETHER': return rgb(NETHER_FOG.get(p.biome, '330808'))
+    # End dimension applies 15% of Java's base #a080a0 in display RGB.
+    if p.dimension == 'END': return rgb('181318')
+    return biome_sky(p) if p.biome_atmosphere else tuple(p.day_sky)
+
+
+def end_sky_setup(scene):
+    """Direction-only six-sided repeating sky; no finite mesh or camera position."""
+    p=scene.mc_env; t=scene.world.node_tree
+    if not t.nodes.get('End sky texture'):
+        direction=node(t,'ShaderNodeSeparateXYZ','End direction')
+        link(t,t.nodes['Rotation'],0,direction,0)
+        absolute=node(t,'ShaderNodeVectorMath','End absolute',operation='ABSOLUTE')
+        link(t,t.nodes['Rotation'],0,absolute,0)
+        axes=node(t,'ShaderNodeSeparateXYZ','End axes'); link(t,absolute,0,axes,0)
+        xy=math_node(t,'End major XY','MAXIMUM')
+        link(t,axes,'X',xy,0); link(t,axes,'Y',xy,1)
+        major=math_node(t,'End major','MAXIMUM')
+        link(t,xy,0,major,0); link(t,axes,'Z',major,1)
+        is_x=math_node(t,'End X face','COMPARE',b=0); is_x.inputs[2].default_value=.000001
+        is_z=math_node(t,'End Z face','COMPARE',b=0); is_z.inputs[2].default_value=.000001
+        link(t,axes,'X',is_x,0); link(t,major,0,is_x,1)
+        link(t,axes,'Z',is_z,0); link(t,major,0,is_z,1)
+        # Project onto the dominant axis, with sixteen repetitions per face.
+        uv=node(t,'ShaderNodeCombineXYZ','End UV')
+        for axis,choice,first,second in [('X',is_x,'X','Y'),('Y',is_z,'Z','Y')]:
+            select=math_node(t,'End select '+axis,'MULTIPLY_ADD')
+            difference=math_node(t,'End difference '+axis,'SUBTRACT')
+            link(t,direction,second,difference,0); link(t,direction,first,difference,1)
+            link(t,choice,0,select,0); link(t,difference,0,select,1); link(t,direction,first,select,2)
+            divide=math_node(t,'End divide '+axis,'DIVIDE')
+            link(t,select,0,divide,0); link(t,major,0,divide,1)
+            scale=math_node(t,'End tile '+axis,'MULTIPLY_ADD',b=8); scale.inputs[2].default_value=8
+            link(t,divide,0,scale,0); link(t,scale,0,uv,axis)
+        texture=node(t,'ShaderNodeTexImage','End sky texture',interpolation='Closest',extension='REPEAT')
+        link(t,uv,0,texture,'Vector')
+        tint=node(t,'ShaderNodeMixRGB','End sky tint',blend_type='MULTIPLY')
+        tint.inputs[0].default_value=1
+        # The project's Main asset is grayscale; supply the purple tint here.
+        # The BB alternative is already purple and needs only neutral darkening.
+        link(t,texture,'Color',tint,1)
+    t.nodes['End sky tint'].inputs[2].default_value=rgba(rgb('281c33' if p.end_texture_set=='MAIN' else '282828'))
+    t.nodes['End sky texture'].image=assets.bundled_image('environment/'+p.end_texture_set.lower()+'/end_sky.png')
+    return t.nodes['End sky tint']
+
+
 def world_setup(scene):
     p=scene.mc_env
     name='MCenv '+p.owner_id+' World'
@@ -291,7 +338,7 @@ def celestial(scene, role, direction, scale, image, tilt):
         t.nodes[prefix+axis+' size'].inputs[1].default_value=1/max(.000001,.18*scale)
     t.nodes[prefix+'Texture'].image=image
     visibility=max(0,min(1,(direction.z+.15)/.15))
-    t.nodes[prefix+'Opacity'].inputs[1].default_value=visibility if scale>0 and scene.mc_env.sky_mode=='MINECRAFT' else 0
+    t.nodes[prefix+'Opacity'].inputs[1].default_value=visibility if scale>0 and scene.mc_env.sky_mode=='MINECRAFT' and scene.mc_env.dimension=='OVERWORLD' else 0
     blend=t.nodes[prefix+'Blend']
     additive=image is not None and bool(image.get('mcenv_additive'))
     blend.blend_type='ADD' if additive else 'MIX'
@@ -446,7 +493,7 @@ def stars_setup(scene, night):
     t.nodes['Star texture mask'].image=star_map(scene)
     t.nodes['Star rotation'].inputs['Angle'].default_value=-math.radians(p.rotation)
     t.nodes['Star tint'].inputs[2].default_value=rgba(p.night_stars)
-    t.nodes['Star strength'].inputs[1].default_value=night*p.stars_strength if p.sky_mode=='MINECRAFT' else 0
+    t.nodes['Star strength'].inputs[1].default_value=night*p.stars_strength if p.sky_mode=='MINECRAFT' and p.dimension=='OVERWORLD' else 0
     # celestial() restored the selected base sky on the Sun input this update.
     source=t.nodes['Sun sprite Blend'].inputs[1]; blend=t.nodes['Star blend']
     if source.links: t.links.new(source.links[0].from_socket,blend.inputs[1])
@@ -555,7 +602,7 @@ def clouds_setup(scene, seconds, c):
         cube_geometry(o.data,centers,cell,cell,max(.001,p.cloud_thickness),p.cloud_mode=='FLAT' or p.cloud_thickness==0)
         o['signature']=sig
     o.location=(p.cloud_offset+seconds*p.cloud_speed,0,p.cloud_height)
-    o.hide_render=not p.clouds; o.hide_viewport=not p.clouds
+    o.hide_render=not p.clouds or p.dimension!='OVERWORLD'; o.hide_viewport=o.hide_render
     m=cloud_material(scene,p.cloud_mode=='FADED'); put_mat(o,m)
     m.node_tree.nodes['Emission'].inputs[0].default_value=rgba(c)
     if hasattr(m,'surface_render_method'): m.surface_render_method='DITHERED'
@@ -604,13 +651,22 @@ def sync(scene):
         star_night=max(0,min(1,(.05-elevation)/.25))
         sky=mix(p.night_sky,biome_sky(p) if p.biome_atmosphere and p.biome!='CUSTOM' else p.day_sky,daylight)
         sky=mix(sky,rgb('f6a16a'),twilight*.5)
+        other_dimension=p.dimension!='OVERWORLD'
+        atmosphere=dimension_fog(p)
+        if other_dimension:
+            twilight=0; star_night=0
+            sky=atmosphere
         if p.fog and p.fog_sky: sky=mix(sky,p.fog_color if p.fog_custom else sky,.35)
         w=world_setup(scene); t=w.node_tree
         ambient=t.nodes['Ambient']; ambient.inputs[0].default_value=rgba(mix(p.night_ambient,p.day_ambient,daylight)); ambient.inputs[1].default_value=p.ambient_strength
+        if other_dimension:
+            ambient.inputs[0].default_value=rgba(rgb('685454' if p.dimension=='NETHER' else '66616f'))
         t.nodes['Rotation'].inputs['Angle'].default_value=math.radians(p.rotation+p.background_rotation)
         visible=t.nodes['Visible sky']
         desired=None
-        if p.sky_mode=='CUSTOM' and p.background_image:
+        if p.dimension=='END' and p.sky_mode=='MINECRAFT':
+            desired=end_sky_setup(scene)
+        elif p.sky_mode=='CUSTOM' and p.background_image:
             name={'IMAGE':'Flat image','BOX':'Box image','EQUIRECTANGULAR':'Panorama'}[p.background_type]
             desired=t.nodes[name]; desired.image=p.background_image
             aspect=1
@@ -625,13 +681,13 @@ def sync(scene):
         direction=Vector((math.cos(a)*math.cos(heading),math.cos(a)*math.sin(heading),math.sin(a)))
         for role,d,energy,c in [('Sunlight',direction,p.sun_strength*daylight,mix(p.day_sunlight,rgb('ffad66'),twilight*.65)),('Moonlight',-direction,p.night_strength*night,rgb('a9c2ff'))]:
             o=object_for(scene,role,'SUN'); o.rotation_euler=(-d).to_track_quat('-Z','Y').to_euler()
-            o.data.energy=energy; o.data.color=c; o.data.angle=math.radians(p.sun_angle)
+            o.data.energy=0 if other_dimension else energy; o.data.color=c; o.data.angle=math.radians(p.sun_angle)
         celestial(scene,'Sun',direction,p.sun_scale,assets.sun_image(p),p.sun_tilt)
         celestial(scene,'Moon',-direction,p.moon_scale,assets.moon_image(p),p.moon_tilt)
         stars_setup(scene,star_night)
         ground_setup(scene)
         clouds_setup(scene,sec,mix(p.night_clouds,p.day_clouds,daylight))
-        fog_setup(scene,sky)
+        fog_setup(scene,atmosphere if other_dimension else sky)
         update_bound(scene,sec)
         _ERRORS.pop(ptr,None)
     except Exception as exc:

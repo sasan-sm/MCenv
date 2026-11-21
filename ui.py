@@ -32,7 +32,7 @@ def field(layout,p,key):
             if key=='sun_image': col.label(text='Default: '+p.sun_texture_set.replace('_',' ')+' sun.png',icon='TEXTURE')
             elif key=='moon_image': col.label(text='Default: '+p.moon_texture_set+' moon phase',icon='TEXTURE')
             elif key=='ground_image': col.label(text='Default: main/grass_block_top.png',icon='TEXTURE')
-    elif key == 'ground_follow_biome':
+    elif key in {'ground_follow_biome', 'twilight', 'biome_atmosphere'}:
         row=layout.row(align=True)
         row.use_property_split=False
         row.alignment='LEFT'
@@ -131,8 +131,10 @@ class MCENV_PT_environment(bpy.types.Panel):
             row.operator(operator,text=key.title(),icon=icon)
             row.prop(p,key,text='')
         for key,title,toggle in SECTIONS: section(layout,p,key,title,toggle)
-        box=layout.box(); box.label(text='Biome / MCprep materials',icon='WORLD')
+        box=layout.box(); box.label(text='Biomes / Dimensions',icon='WORLD')
+        box.prop(p,'dimension')
         box.prop(p,'biome',text='')
+        if p.dimension=='END': box.prop(p,'end_texture_set')
         if p.biome=='CUSTOM': color_grid(box,p,BIOME_FIELDS)
         else: box.operator('mcenv.custom_biome',icon='COLOR')
         box.prop(p,'biome_scope'); box.prop(p,'biome_texture_mode')

@@ -57,10 +57,36 @@ BIOMES = {
     # Append presets to keep numeric enum IDs stable.
     'DAPPLED_FOREST': ('Dappled Forest', 'df6827', 'e68e30', '375154'),
     'CUSTOM': ('Custom', '91bd59', '77ab2f', '3f76e4'),
+    'NETHER_WASTES': ('Nether Wastes', 'bfb755', 'aea42a', '3f76e4'),
+    'SOUL_SAND_VALLEY': ('Soul Sand Valley', 'bfb755', 'aea42a', '3f76e4'),
+    'CRIMSON_FOREST': ('Crimson Forest', 'bfb755', 'aea42a', '3f76e4'),
+    'WARPED_FOREST': ('Warped Forest', 'bfb755', 'aea42a', '3f76e4'),
+    'BASALT_DELTAS': ('Basalt Deltas', 'bfb755', 'aea42a', '3f76e4'),
+    'THE_END': ('The End', '8eb971', '71a74d', '3f76e4'),
+    'SMALL_END_ISLANDS': ('Small End Islands', '8eb971', '71a74d', '3f76e4'),
+    'END_MIDLANDS': ('End Midlands', '8eb971', '71a74d', '3f76e4'),
+    'END_HIGHLANDS': ('End Highlands', '8eb971', '71a74d', '3f76e4'),
+    'END_BARRENS': ('End Barrens', '8eb971', '71a74d', '3f76e4'),
+    'THE_VOID': ('The Void', '8eb971', '71a74d', '3f76e4'),
 }
 
+# Java biome membership: The Void is a superflat Overworld biome, not an End biome.
+NETHER_BIOMES = ('NETHER_WASTES', 'SOUL_SAND_VALLEY', 'CRIMSON_FOREST', 'WARPED_FOREST', 'BASALT_DELTAS')
+END_BIOMES = ('THE_END', 'SMALL_END_ISLANDS', 'END_MIDLANDS', 'END_HIGHLANDS', 'END_BARRENS')
+DIMENSION_ITEMS = [('OVERWORLD', 'Over world', 'Overworld and The Void superflat biome'),
+                   ('NETHER', 'Nether', 'Constant dim atmosphere; no sun, moon, stars or clouds'),
+                   ('END', 'The End', 'Static textured sky and constant dim illumination')]
+DIMENSION_DEFAULTS = {'OVERWORLD': 'PLAINS', 'NETHER': 'NETHER_WASTES', 'END': 'THE_END'}
+NETHER_FOG = {'NETHER_WASTES': '330808', 'SOUL_SAND_VALLEY': '1b4745',
+              'CRIMSON_FOREST': '330303', 'WARPED_FOREST': '1a051a', 'BASALT_DELTAS': '685f70'}
 
-# (temperature, downfall) drives Java's triangular grass/foliage colormap.
+
+def biome_dimension(key):
+    return 'NETHER' if key in NETHER_BIOMES else 'END' if key in END_BIOMES else 'OVERWORLD'
+
+
+
+# Temperature drives the Overworld's Java-style sky hue.
 CLIMATE = {
     'PLAINS': (.8,.4), 'FOREST': (.7,.8), 'BIRCH_FOREST': (.6,.6),
     'DARK_FOREST': (.7,.8), 'DAPPLED_FOREST': (.6,.6),
@@ -88,6 +114,38 @@ _BIOME_IDS = {key:index for index,key in enumerate(_LEGACY_BIOMES)}
 for _key in BIOMES:
     if _key not in _BIOME_IDS: _BIOME_IDS[_key] = len(_BIOME_IDS)
 BIOME_ITEMS = [(key,value[0],'',0,_BIOME_IDS[key]) for key,value in BIOMES.items()]
+# Keep callback strings and lists alive: Blender retains pointers to enum strings.
+DIMENSION_BIOME_ITEMS = {dim: [item for item in BIOME_ITEMS
+    if item[0] == 'CUSTOM' or biome_dimension(item[0]) == dim]
+    for dim, _, _ in DIMENSION_ITEMS}
+
+
+def biome_items(self, context):
+    return DIMENSION_BIOME_ITEMS[self.dimension]
+
+
+def update_dimension(self, context):
+    from . import engine
+    scene = self.id_data
+    ptr = scene.as_pointer()
+    if ptr in engine._BUSY: return
+    old = self.get('_active_dimension', 'OVERWORLD')
+    number = self.get('biome', _BIOME_IDS['PLAINS'])
+    old_key = next((key for key, value in _BIOME_IDS.items() if value == number), 'PLAINS')
+    self['_biome_' + old] = old_key
+    self['_fog_' + old] = [self.fog_distance, self.fog_size]
+    choice = self.get('_biome_' + self.dimension, DIMENSION_DEFAULTS[self.dimension])
+    if choice not in {item[0] for item in DIMENSION_BIOME_ITEMS[self.dimension]}:
+        choice = DIMENSION_DEFAULTS[self.dimension]
+    engine._BUSY.add(ptr)
+    try:
+        self.biome = choice
+        distances = self.get('_fog_' + self.dimension, (10., 86.) if self.dimension=='NETHER' else (80., 160.))
+        self.fog_distance, self.fog_size = distances
+        self['_active_dimension'] = self.dimension
+    finally:
+        engine._BUSY.discard(ptr)
+    update(self, context)
 
 
 # Java dry_foliage.png samples / explicit overrides from Minecraft Wiki > Biome.
@@ -182,7 +240,7 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     moon_texture_set: EnumProperty(name='Moon textures', items=TEXTURE_SETS, default='MAIN', update=update)
     dry_foliage_colormap: PointerProperty(name='Dry foliage colormap', type=bpy.types.Image, description='Optional resource-pack textures/colormap/dry_foliage.png for leaf litter', update=update)
     grass_side_overlay: PointerProperty(name='Grass side overlay', type=bpy.types.Image, description='Optional RGBA grass_block_side_overlay.png; empty uses the bundled default. Uses the side diffuse UVs, not a normal map', update=update)
-    biome_atmosphere: BoolProperty(name='Biome sky color', description='Use a temperature-based Minecraft-style daytime sky without overwriting day/night colors', default=False, update=update)
+    biome_atmosphere: BoolProperty(name='Biome sky color', description='Use temperature-based Overworld sky color without overwriting manual day/night colors; Nether and End always use their dimension atmosphere', default=False, update=update)
     grass_colormap: PointerProperty(name='Grass colormap', type=bpy.types.Image, description='Optional resource-pack textures/colormap/grass.png', update=update)
     foliage_colormap: PointerProperty(name='Foliage colormap', type=bpy.types.Image, description='Optional resource-pack textures/colormap/foliage.png', update=update)
     enabled: BoolProperty(default=False)
@@ -225,7 +283,9 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     ground: BoolProperty(name='Ground', description='Optional background plane, independent of the imported Minecraft terrain', default=False, update=update)
     ground_follow_biome: BoolProperty(name='Surface follows biome', description='Follow the biome surface color and shading (grass, sand, snow, stone or water); keeps the selected texture and never changes imported blocks', default=False, update=update)
     ground_image: PointerProperty(name='Ground texture', type=bpy.types.Image, description='Optional ground image; empty uses textures/block/main/grass_block_top.png', update=update)
-    biome: EnumProperty(name='Biome', items=BIOME_ITEMS, default='PLAINS', update=update)
+    dimension: EnumProperty(name='Dimension', items=DIMENSION_ITEMS, default='OVERWORLD', update=update_dimension)
+    end_texture_set: EnumProperty(name='End sky textures', items=TEXTURE_SETS, default='MAIN', update=update)
+    biome: EnumProperty(name='Biome', items=biome_items, default=0, update=update)
     grass_color: color('Grass', '91bd59')
     foliage_color: color('Foliage', '77ab2f')
     dry_foliage_color: color('Dry foliage / leaf litter', 'a37546')

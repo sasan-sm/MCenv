@@ -5,6 +5,7 @@ import bpy
 from bpy.props import StringProperty, IntProperty, BoolProperty
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 from . import engine, biome_materials
+from .properties import BIOMES, DIMENSION_BIOME_ITEMS
 
 
 class MCENV_OT_create(bpy.types.Operator):
@@ -324,14 +325,22 @@ class MCENV_OT_import(bpy.types.Operator,ImportHelper):
                 if getattr(prop,'is_array',False):
                     if not isinstance(v,list) or len(v)!=prop.array_length or any(type(x) not in (int,float) or not math.isfinite(x) or x<0 or x>1 for x in v): raise ValueError('Invalid color: '+k)
                 elif prop.type=='ENUM':
-                    if v not in prop.enum_items.keys(): raise ValueError('Invalid choice: '+k)
+                    if v not in (BIOMES.keys() if k=='biome' else prop.enum_items.keys()): raise ValueError('Invalid choice: '+k)
                 elif prop.type=='BOOLEAN':
                     if type(v) is not bool: raise ValueError('Invalid switch: '+k)
                 elif prop.type in {'FLOAT','INT'}:
                     if type(v) not in (int,float) or not math.isfinite(v) or not prop.hard_min<=v<=prop.hard_max or (prop.type=='INT' and type(v) is not int): raise ValueError('Invalid number: '+k)
+            target_dimension=settings.get('dimension',p.dimension)
+            target_biome=settings.get('biome',p.biome)
+            if target_biome not in {item[0] for item in DIMENSION_BIOME_ITEMS[target_dimension]}:
+                raise ValueError('Biome does not belong to the chosen dimension')
             ptr=context.scene.as_pointer(); engine._BUSY.add(ptr)
             try:
-                for k,v in settings.items(): setattr(p,k,v)
+                # Dimension first: dynamic biome enums must see the target dimension.
+                if 'dimension' in settings: p.dimension=settings['dimension']
+                for k,v in settings.items():
+                    if k!='dimension': setattr(p,k,v)
+                p['_active_dimension']=p.dimension
             finally: engine._BUSY.discard(ptr)
             engine.sync(context.scene)
         except (OSError,ValueError,TypeError,AttributeError) as exc:
@@ -350,6 +359,8 @@ class MCENV_OT_reset(bpy.types.Operator):
         p=context.scene.mc_env; ptr=context.scene.as_pointer(); engine._BUSY.add(ptr)
         try:
             for k in preset_data(p)['settings']: p.property_unset(k)
+            for key in list(p.keys()):
+                if key.startswith(('_biome_', '_fog_')) or key=='_active_dimension': del p[key]
         finally: engine._BUSY.discard(ptr)
         engine.sync(context.scene)
         return {'FINISHED'}
