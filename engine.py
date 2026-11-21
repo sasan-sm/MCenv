@@ -122,28 +122,7 @@ def biome_color(p, kind):
     if kind == 'BIRCH': return rgb('80a755')
     grass = kind == 'GRASS'
     dry = kind == 'DRY_FOLIAGE'
-    image = p.dry_foliage_colormap if dry else p.grass_colormap if grass else p.foliage_colormap
-    # Dry foliage has its own overrides, not the green foliage overrides.
-    hardcoded = p.biome in ({'SWAMP','MANGROVE','BADLANDS','DARK_FOREST','PALE_GARDEN','DAPPLED_FOREST'} if dry else
-                           {'SWAMP','MANGROVE','BADLANDS','CHERRY_GROVE','PALE_GARDEN','DAPPLED_FOREST'})
-    if image and image.has_data and image.channels >= 3 and not hardcoded:
-        temp,rain = CLIMATE.get(p.biome, (.8,.4))
-        temp=max(0,min(1,temp)); rain=max(0,min(1,rain))*temp
-        x=int((1-temp)*255); y=int((1-rain)*255)
-        width,height=image.size[:]
-        ix=min(width-1,int(x*width/256))
-        # Minecraft colormap coordinates are top-left; Blender pixels bottom-left.
-        iy=height-1-min(height-1,int(y*height/256))
-        k=(iy*width+ix)*image.channels
-        c=tuple(image.pixels[k+i] for i in range(3))
-        if not image.is_float and image.colorspace_settings.name == 'sRGB':
-            c=tuple(linear(v) for v in c)
-        if grass and p.biome == 'DARK_FOREST':
-            # Java dark forest: (sampled sRGB grass + 0x28340a) / 2.
-            def srgb(v): return 12.92*v if v<=.0031308 else 1.055*v**(1/2.4)-.055
-            c=tuple(linear((srgb(v)+int('28340a'[i*2:i*2+2],16)/255)/2) for i,v in enumerate(c))
-        return c
-    if dry: return rgb(DRY_FOLIAGE.get(p.biome, 'a37546'))
+    if dry: return rgb(DRY_FOLIAGE.get(p.biome, 'a38046' if p.dimension=='NETHER' else 'a17448' if p.dimension=='END' or p.biome=='THE_VOID' else 'a37546'))
     return rgb(b[1] if grass else b[2])
 
 

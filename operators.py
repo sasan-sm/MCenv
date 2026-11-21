@@ -250,44 +250,6 @@ class MCENV_OT_custom_biome(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class MCENV_OT_tint(bpy.types.Operator):
-    bl_idname='mcenv.bind_tint'
-    bl_label='Apply Biome Tint to Selected'
-    bl_description='Manually bind all materials on selected meshes to Tint kind; use automatic detection for mixed world meshes'
-    bl_options={'REGISTER','UNDO'}
-
-    def execute(self,context):
-        result=biome_materials.bind(context.scene,list(context.selected_objects),context.scene.mc_env.tint_kind)
-        if not result['slots']:
-            self.report({'WARNING'},'No supported editable surface materials selected'); return {'CANCELLED'}
-        engine.sync(context.scene)
-        self.report({'INFO'},f"Bound {result['slots']} material slots. Originals can be restored.")
-        return {'FINISHED'}
-
-
-class MCENV_OT_untint(bpy.types.Operator):
-    bl_idname='mcenv.remove_tint'
-    bl_label='Remove Biome Tint from Selected'
-    bl_options={'REGISTER','UNDO'}
-
-    def execute(self,context):
-        biome_materials.restore(context.scene,list(context.selected_objects))
-        for obj in context.selected_objects:
-            for slot in obj.material_slots:
-                m=slot.material
-                if not m or not m.use_nodes or m.get('mcenv_biome_owner'): continue
-                t=m.node_tree
-                for n in list(t.nodes):
-                    if not n.get('mcenv_tint'): continue
-                    source=n.inputs[1].links[0].from_socket if n.inputs[1].links else None
-                    for l in list(n.outputs[0].links):
-                        dest=l.to_socket
-                        if source: t.links.new(source,dest)
-                        else: dest.default_value=n.inputs[1].default_value[:]
-                    t.nodes.remove(n)
-        return {'FINISHED'}
-
-
 class MCENV_OT_atlas(bpy.types.Operator):
     bl_idname='mcenv.bind_atlas'
     bl_label='Animate Selected Texture Strips'
@@ -319,7 +281,7 @@ class MCENV_OT_atlas(bpy.types.Operator):
         return {'FINISHED'}
 
 
-SKIP={'rna_type','name','enabled','owner_id','previous_world','previous_world_empty','tint_kind'}
+SKIP={'rna_type','name','enabled','owner_id','previous_world','previous_world_empty'}
 
 
 def preset_data(p):
@@ -407,7 +369,7 @@ class MCENV_OT_reset(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_image,MCENV_OT_geometry_add,MCENV_OT_geometry_remove,MCENV_OT_animation_add,MCENV_OT_animation_remove,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_detect_biome,MCENV_OT_restore_biome,MCENV_OT_custom_biome,MCENV_OT_tint,MCENV_OT_untint,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
+CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_image,MCENV_OT_geometry_add,MCENV_OT_geometry_remove,MCENV_OT_animation_add,MCENV_OT_animation_remove,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_detect_biome,MCENV_OT_restore_biome,MCENV_OT_custom_biome,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
 
 
 def register():

@@ -333,7 +333,7 @@ def prepare(material, settings, kind):
     return True
 
 
-def bind(scene, objects, manual_kind=None):
+def bind(scene, objects):
     """Bind once; scene-owned material copies are shared within this operation.
 
     Object-linked slots prevent selected-only bindings changing unselected
@@ -362,7 +362,7 @@ def bind(scene, objects, manual_kind=None):
             if not old: continue
             pointer=old.as_pointer()
             if pointer not in classified: classified[pointer]=classify(old)
-            kind = manual_kind or classified[pointer]
+            kind = classified[pointer]
             if not kind:
                 counts['skipped'] += 1; continue
             record_index = records.get((obj.as_pointer(),index))
