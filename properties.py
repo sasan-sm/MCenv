@@ -278,7 +278,7 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     moon_tilt: FloatProperty(name='Moon angle', default=0, update=update)
     moon_scale: FloatProperty(name='Moon scale', description='Sprite size multiplier; default 2.222222 gives the Java 40:100 full-card projection (about 5.725 degrees for the core)', default=MOON_SPRITE_SCALE, min=0, soft_max=5, precision=3, update=update)
     stars_count: IntProperty(name='Star count', description='Number of stars in the night sky', default=420, min=0, soft_max=2000, max=10000, update=update)
-    stars_size: FloatProperty(name='Star size', default=.045, min=.005, max=.15, update=update)
+    stars_size: FloatProperty(name='Star size', default=.045, min=.001, max=.15, update=update)
     stars_size_random: FloatProperty(name='Random star size', description='0 keeps every star the same size; higher values give the stars random sizes around Star size', default=0, min=0, max=1, subtype='FACTOR', update=update)
     stars_strength: FloatProperty(name='Star brightness', default=1, min=0, soft_max=10, update=update)
     clouds: BoolProperty(name='Clouds', default=True, update=update)

@@ -396,13 +396,23 @@ def star_map(scene):
     """
     from array import array
     p=scene.mc_env
-    signature=str(('directional-v1',p.stars_size,p.stars_count,p.stars_size_random))
+    signature=str(('directional-v2',p.stars_size,p.stars_count,p.stars_size_random))
     image=next((im for im in bpy.data.images if im.get('mcenv_stars_owner')==p.owner_id),None)
     if image and image.get('mcenv_stars_signature')==signature: return image
     width,height=4096,2048
     pixels=array('f',[0])*(width*height*4)
     for d,half in star_directions(p):
         longitude=math.atan2(d.y,d.x); latitude=math.asin(d.z)
+        # A dot cannot be baked smaller than one texel, so sub-texel stars
+        # keep their relative size as that texel's alpha: Random star size
+        # stays visible even when every star is below one texel.
+        side=2*half/(math.pi/height)
+        if side<=1:
+            x=int((longitude/math.tau+.5)*width)%width
+            y=min(height-1,int((latitude/math.pi+.5)*height))
+            k=(y*width+x)*4
+            if side>pixels[k+3]: pixels[k]=pixels[k+1]=pixels[k+2]=pixels[k+3]=side
+            continue
         # Bound by the angular radius of the square's circumscribed circle.
         radius=math.atan(half*math.sqrt(2))
         ymin=max(0,int((latitude-radius)/math.pi*height+height/2)-1)
