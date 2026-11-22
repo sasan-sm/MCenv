@@ -232,8 +232,10 @@ class MCENV_AnimationObject(bpy.types.PropertyGroup):
 SUN_BODY_ANGLE = math.degrees(2 * math.atan((30 / 100) * (8 / 32)))
 MOON_BODY_ANGLE = math.degrees(2 * math.atan((20 / 100) * (8 / 32)))
 SPRITE_PROJECTION_SPAN = .18
-SUN_SPRITE_SCALE = (2 * 30 / 100) / SPRITE_PROJECTION_SPAN
-MOON_SPRITE_SCALE = (2 * 20 / 100) / SPRITE_PROJECTION_SPAN
+# Custom default sprite sizes; 0.6 / .18 (sun) or 0.4 / .18 (moon) would
+# reproduce the Java celestial-card projection instead.
+SUN_SPRITE_SCALE = 2.3
+MOON_SPRITE_SCALE = 2.0
 # Keep the existing Blender daylight calibration; use the Wiki's generic
 # Vibrant Visuals moon/sun direct-light ratio, not vanilla light levels as watts.
 SUN_STRENGTH = 3.0
@@ -272,11 +274,11 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     background_rotation: FloatProperty(name='Image rotation', default=0, update=update)
     sun_image: PointerProperty(name='Sun texture', type=bpy.types.Image, update=update)
     sun_tilt: FloatProperty(name='Sun angle', default=0, update=update)
-    sun_scale: FloatProperty(name='Sun scale', description='Sprite size multiplier; default 3.333333 gives the Java 60:100 full-card projection (about 8.578 degrees for the core)', default=SUN_SPRITE_SCALE, min=0, soft_max=5, precision=3, update=update)
+    sun_scale: FloatProperty(name='Sun scale', description='Sprite size multiplier; 3.333333 gives the Java 60:100 full-card projection (about 8.578 degrees for the core)', default=SUN_SPRITE_SCALE, min=0, soft_max=5, precision=3, update=update)
     moon_image: PointerProperty(name='Moon texture', type=bpy.types.Image, update=update)
     moon_phase: EnumProperty(name='Moon phase', items=[(str(i), n, '') for i,n in enumerate(['Full Moon','Waning Gibbous','Last Quarter','Waning Crescent','New Moon','Waxing Crescent','First Quarter','Waxing Gibbous'])], update=update)
     moon_tilt: FloatProperty(name='Moon angle', default=0, update=update)
-    moon_scale: FloatProperty(name='Moon scale', description='Sprite size multiplier; default 2.222222 gives the Java 40:100 full-card projection (about 5.725 degrees for the core)', default=MOON_SPRITE_SCALE, min=0, soft_max=5, precision=3, update=update)
+    moon_scale: FloatProperty(name='Moon scale', description='Sprite size multiplier; 2.222222 gives the Java 40:100 full-card projection (about 5.725 degrees for the core)', default=MOON_SPRITE_SCALE, min=0, soft_max=5, precision=3, update=update)
     stars_count: IntProperty(name='Star count', description='Number of stars in the night sky', default=420, min=0, soft_max=2000, max=10000, update=update)
     stars_size: FloatProperty(name='Star size', default=.045, min=.001, max=.15, update=update)
     stars_size_random: FloatProperty(name='Random star size', description='0 keeps every star the same size; higher values give the stars random sizes around Star size', default=0, min=0, max=1, subtype='FACTOR', update=update)
