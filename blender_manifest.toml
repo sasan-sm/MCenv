@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "mc_env"
-version = "0.9.0"
+version = "1.0.0"
 name = "MCenv"
 tagline = "Minecraft-inspired environment, sky, clouds, fog and wind"
 maintainer = "MCenv contributors <sasan.sm23@gmail.com>"
