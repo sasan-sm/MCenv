@@ -5,7 +5,7 @@ from . import engine
 
 # Environment sections in the World Properties editor.
 def section_fields(p, section):
-    if section=='sun': return ['sun_angle','sun_strength','ambient_strength','night_strength']
+    if section=='sun': return ['sun_angle','sun_strength','ambient_strength','moon_angle','night_strength']
     if section=='sky':
         if p.sky_mode=='CUSTOM':
             return ['sky_mode','background_image','background_type','background_stretch' if p.background_type=='IMAGE' else 'background_rotation','twilight']

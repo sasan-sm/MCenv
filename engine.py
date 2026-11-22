@@ -7,7 +7,8 @@ import colorsys
 import bpy
 from mathutils import Vector
 from bpy.app.handlers import persistent
-from .properties import BIOMES, CLIMATE, DRY_FOLIAGE, NETHER_FOG, rgb, linear
+from .properties import (BIOMES, CLIMATE, DRY_FOLIAGE, NETHER_FOG,
+                         SPRITE_PROJECTION_SPAN, rgb, linear)
 from . import assets
 
 _BUSY = set()
@@ -312,9 +313,10 @@ def celestial(scene, role, direction, scale, image, tilt):
     t.nodes[prefix+'Forward'].inputs[1].default_value=normal
     t.nodes[prefix+'Right'].inputs[1].default_value=right*math.cos(angle)+up*math.sin(angle)
     t.nodes[prefix+'Up'].inputs[1].default_value=up*math.cos(angle)-right*math.sin(angle)
-    # Full card spans about ten degrees, with the pixel core inside that card.
+    # Keep the existing scale unit; defaults now reproduce Java's distinct
+    # sun/moon card projections, including the glow around each 8px core.
     for axis in ('X','Y'):
-        t.nodes[prefix+axis+' size'].inputs[1].default_value=1/max(.000001,.18*scale)
+        t.nodes[prefix+axis+' size'].inputs[1].default_value=1/max(.000001,SPRITE_PROJECTION_SPAN*scale)
     t.nodes[prefix+'Texture'].image=image
     visibility=max(0,min(1,(direction.z+.15)/.15))
     t.nodes[prefix+'Opacity'].inputs[1].default_value=visibility if scale>0 and scene.mc_env.sky_mode=='MINECRAFT' and scene.mc_env.dimension=='OVERWORLD' else 0
@@ -659,9 +661,9 @@ def sync(scene):
         else: visible.inputs['Color'].default_value=rgba(sky)
         a=(hour-6)*math.tau/24; heading=math.radians(p.rotation)
         direction=Vector((math.cos(a)*math.cos(heading),math.cos(a)*math.sin(heading),math.sin(a)))
-        for role,d,energy,c in [('Sunlight',direction,p.sun_strength*daylight,mix(p.day_sunlight,rgb('ffad66'),twilight*.65)),('Moonlight',-direction,p.night_strength*night,rgb('a9c2ff'))]:
+        for role,d,energy,c,angle in [('Sunlight',direction,p.sun_strength*daylight,mix(p.day_sunlight,rgb('ffad66'),twilight*.65),p.sun_angle),('Moonlight',-direction,p.night_strength*night,rgb('a9c2ff'),p.moon_angle)]:
             o=object_for(scene,role,'SUN'); o.rotation_euler=(-d).to_track_quat('-Z','Y').to_euler()
-            o.data.energy=0 if other_dimension else energy; o.data.color=c; o.data.angle=math.radians(p.sun_angle)
+            o.data.energy=0 if other_dimension else energy; o.data.color=c; o.data.angle=math.radians(angle)
         celestial(scene,'Sun',direction,p.sun_scale,assets.sun_image(p),p.sun_tilt)
         celestial(scene,'Moon',-direction,p.moon_scale,assets.moon_image(p),p.moon_tilt)
         stars_setup(scene,star_night)

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+import math
 import bpy
 from bpy.props import (BoolProperty, FloatProperty, IntProperty, EnumProperty,
                        FloatVectorProperty, StringProperty, PointerProperty, CollectionProperty)
@@ -225,6 +226,20 @@ class MCENV_AnimationObject(bpy.types.PropertyGroup):
     influence: FloatProperty(name='Influence', default=1, min=0, soft_max=3, update=animation_update)
 
 
+# Java celestial cards: sun half-width 30, moon half-width 20, distance 100.
+# The bundled 32px textures have an 8px central body (one quarter of the card).
+# See USER_GUIDE.md for sources and the distinction from physical light units.
+SUN_BODY_ANGLE = math.degrees(2 * math.atan((30 / 100) * (8 / 32)))
+MOON_BODY_ANGLE = math.degrees(2 * math.atan((20 / 100) * (8 / 32)))
+SPRITE_PROJECTION_SPAN = .18
+SUN_SPRITE_SCALE = (2 * 30 / 100) / SPRITE_PROJECTION_SPAN
+MOON_SPRITE_SCALE = (2 * 20 / 100) / SPRITE_PROJECTION_SPAN
+# Keep the existing Blender daylight calibration; use the Wiki's generic
+# Vibrant Visuals moon/sun direct-light ratio, not vanilla light levels as watts.
+SUN_STRENGTH = 3.0
+MOON_STRENGTH = SUN_STRENGTH * (0.4 / 100)
+
+
 class MCENV_Settings(bpy.types.PropertyGroup):
     animation_objects: CollectionProperty(type=MCENV_AnimationObject)
     animation_candidate: PointerProperty(name='Object', type=bpy.types.Object, description='Choose a mesh in this scene and press Add, or use Add Selected')
@@ -245,10 +260,11 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     previous_world_empty: BoolProperty(default=False)
     time: FloatProperty(name='Time', description='Hours, 0 = midnight, 6 = sunrise, 12 = noon; drag past either end to wrap around the day', default=9, update=update_time)
     rotation: FloatProperty(name='Rotation', description='World heading in degrees; drag across the ends to wrap around', default=0, update=update_rotation)
-    sun_angle: FloatProperty(name='Sunlight angle', description='Angular size in degrees; controls soft shadows', default=.526, min=0, max=180, update=update)
-    sun_strength: FloatProperty(name='Strength', default=3, min=0, soft_max=10, update=update)
-    ambient_strength: FloatProperty(name='Ambient strength', default=.5, min=0, soft_max=3, update=update)
-    night_strength: FloatProperty(name='Moonlight strength', default=.12, min=0, soft_max=2, update=update)
+    sun_angle: FloatProperty(name='Sunlight angle', description='Shadow-source angular size in degrees; default matches the Java sun texture core, not the real Sun', default=SUN_BODY_ANGLE, min=0, max=180, precision=3, update=update)
+    sun_strength: FloatProperty(name='Strength', description='Blender sun energy; default 3 is the daylight calibration, not Minecraft light level 15 or a lumen value', default=SUN_STRENGTH, min=0, soft_max=10, update=update)
+    ambient_strength: FloatProperty(name='Ambient strength', description='Independent Blender ambient multiplier; not a Minecraft light level', default=.5, min=0, soft_max=3, update=update)
+    moon_angle: FloatProperty(name='Moonlight angle', description='Independent shadow-source angular size in degrees; default matches the Java full-moon texture core', default=MOON_BODY_ANGLE, min=0, max=180, precision=3, update=update)
+    night_strength: FloatProperty(name='Moonlight strength', description='Blender moon energy; default 0.012 maps the generic Vibrant Visuals 0.4:100 moon/sun ratio to daylight strength 3', default=MOON_STRENGTH, min=0, soft_max=2, precision=3, update=update)
     sky_mode: EnumProperty(name='Sky background', items=[('MINECRAFT','Minecraft','Original procedural block-style sky'),('CUSTOM','Custom','Use your own background image')], default='MINECRAFT', update=update)
     background_image: PointerProperty(name='Background image', type=bpy.types.Image, update=update)
     background_type: EnumProperty(name='Image type', items=[('EQUIRECTANGULAR','Equirectangular','Panoramic image / HDRI'),('IMAGE','Image','Camera-facing background'),('BOX','Box','Box-projected repeating background')], update=update)
@@ -256,11 +272,11 @@ class MCENV_Settings(bpy.types.PropertyGroup):
     background_rotation: FloatProperty(name='Image rotation', default=0, update=update)
     sun_image: PointerProperty(name='Sun texture', type=bpy.types.Image, update=update)
     sun_tilt: FloatProperty(name='Sun angle', default=0, update=update)
-    sun_scale: FloatProperty(name='Sun scale', default=1, min=0, soft_max=5, update=update)
+    sun_scale: FloatProperty(name='Sun scale', description='Sprite size multiplier; default 3.333333 gives the Java 60:100 full-card projection (about 8.578 degrees for the core)', default=SUN_SPRITE_SCALE, min=0, soft_max=5, precision=3, update=update)
     moon_image: PointerProperty(name='Moon texture', type=bpy.types.Image, update=update)
     moon_phase: EnumProperty(name='Moon phase', items=[(str(i), n, '') for i,n in enumerate(['Full Moon','Waning Gibbous','Last Quarter','Waning Crescent','New Moon','Waxing Crescent','First Quarter','Waxing Gibbous'])], update=update)
     moon_tilt: FloatProperty(name='Moon angle', default=0, update=update)
-    moon_scale: FloatProperty(name='Moon scale', default=1, min=0, soft_max=5, update=update)
+    moon_scale: FloatProperty(name='Moon scale', description='Sprite size multiplier; default 2.222222 gives the Java 40:100 full-card projection (about 5.725 degrees for the core)', default=MOON_SPRITE_SCALE, min=0, soft_max=5, precision=3, update=update)
     stars_count: IntProperty(name='Star count', description='Number of stars in the night sky', default=420, min=0, soft_max=2000, max=10000, update=update)
     stars_size: FloatProperty(name='Star size', default=.045, min=.005, max=.15, update=update)
     stars_size_random: FloatProperty(name='Random star size', description='0 keeps every star the same size; higher values give the stars random sizes around Star size', default=0, min=0, max=1, subtype='FACTOR', update=update)
