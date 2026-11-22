@@ -80,59 +80,6 @@ class MCENV_OT_image(bpy.types.Operator,ImportHelper):
         return {'FINISHED'}
 
 
-class MCENV_OT_geometry_add(bpy.types.Operator):
-    bl_idname='mcenv.geometry_add'
-    bl_label='Add Geometry'
-    bl_description='Add renderable mesh edges to selected editable meshes only; all added meshes share the settings below'
-    bl_options={'REGISTER','UNDO'}
-    use_selected: BoolProperty(default=False,options={'HIDDEN','SKIP_SAVE'})
-
-    def execute(self,context):
-        scene=context.scene; p=scene.mc_env
-        engine.migrate_geometry_settings(scene)
-        candidates=list(context.selected_objects)
-        existing={item.object for item in p.geometry_objects if item.object}
-        count=0; skipped=0
-        for obj in candidates:
-            if (obj.type!='MESH' or obj.get('mcenv_owner') or obj.library or obj.override_library
-                    or obj.data.library or obj.mode!='OBJECT' or len(obj.users_scene)>1
-                    or obj.name not in scene.objects):
-                skipped+=1; continue
-            if obj in existing:
-                if engine.geometry_modifier(scene,obj) is None:
-                    engine.build_geometry(scene,obj); count+=1
-                continue
-            mod=engine.build_geometry(scene,obj)
-            item=p.geometry_objects.add(); item.object=obj; item.node_group=mod.node_group
-            existing.add(obj); count+=1
-        engine.sync_geometry(scene)
-        self.report({'INFO'} if count else {'WARNING'},f'Added {count} meshes; {skipped} unsupported objects skipped. Duplicates are not added.')
-        return {'FINISHED'} if count else {'CANCELLED'}
-
-
-class MCENV_OT_geometry_remove(bpy.types.Operator):
-    bl_idname='mcenv.geometry_remove'
-    bl_label='Remove Geometry'
-    bl_description='Remove MCenv Geometry from selected meshes only; preserve original objects and materials'
-    bl_options={'REGISTER','UNDO'}
-    index: IntProperty(default=-1)
-
-    def execute(self,context):
-        p=context.scene.mc_env; selected=set(context.selected_objects)
-        # Keep explicit index support for old shortcuts/scripts, but the panel
-        # button always removes targets by selection, like Remove Wind.
-        indices=[self.index] if 0<=self.index<len(p.geometry_objects) else [
-            i for i,item in enumerate(p.geometry_objects) if item.object in selected or not item.object]
-        if not indices:
-            self.report({'WARNING'},'Select meshes with MCenv Geometry first')
-            return {'CANCELLED'}
-        for index in sorted(indices,reverse=True):
-            engine.remove_geometry(context.scene,p.geometry_objects[index])
-            p.geometry_objects.remove(index)
-        self.report({'INFO'},f'Removed Geometry from {len(indices)} targets')
-        return {'FINISHED'}
-
-
 class MCENV_OT_animation_add(bpy.types.Operator):
     bl_idname='mcenv.animation_add'
     bl_label='Add'
@@ -293,8 +240,7 @@ class MCENV_OT_atlas(bpy.types.Operator):
         return {'FINISHED'}
 
 
-SKIP={'rna_type','name','enabled','owner_id','previous_world','previous_world_empty',
-      'geometry_migrated','geometry_migrating'}
+SKIP={'rna_type','name','enabled','owner_id','previous_world','previous_world_empty'}
 
 
 def preset_data(p):
@@ -382,7 +328,7 @@ class MCENV_OT_reset(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_image,MCENV_OT_geometry_add,MCENV_OT_geometry_remove,MCENV_OT_animation_add,MCENV_OT_animation_remove,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_detect_biome,MCENV_OT_restore_biome,MCENV_OT_custom_biome,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
+CLASSES=(MCENV_OT_create,MCENV_OT_remove,MCENV_OT_image,MCENV_OT_animation_add,MCENV_OT_animation_remove,MCENV_OT_wind,MCENV_OT_unwind,MCENV_OT_detect_biome,MCENV_OT_restore_biome,MCENV_OT_custom_biome,MCENV_OT_atlas,MCENV_OT_export,MCENV_OT_import,MCENV_OT_reset)
 
 
 def register():

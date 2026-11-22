@@ -97,25 +97,6 @@ def animate_section(layout,scene):
     if not p.wind: col.label(text='Enable Wind to move listed objects.',icon='INFO')
 
 
-def geometry_section(layout,scene):
-    p=scene.mc_env; col=layout.column(align=True)
-    col.label(text='Geometry',icon='MESH_DATA')
-    col.use_property_split=False; col.use_property_decorate=False
-    row=col.row(align=True)
-    row.operator('mcenv.geometry_add',text='Add')
-    row.operator('mcenv.geometry_remove',text='Remove')
-    row=col.row(align=True)
-    row.prop(p,'geometry_enabled',text='')
-    settings=row.row(align=True); settings.enabled=p.geometry_enabled
-    settings.prop(p,'geometry_wireframe',text='Wireframe',slider=True)
-    settings.prop(p,'geometry_opacity',text='Opacity',slider=True)
-    settings=col.column(align=True); settings.enabled=p.geometry_enabled
-    settings.prop(p,'geometry_thickness',text='Thickness')
-    settings.prop(p,'geometry_color',text='Edge Color')
-    col.label(text='Added meshes only; visible in final renders.',icon='INFO')
-    col.label(text='Targets: '+str(sum(bool(item.object) for item in p.geometry_objects)))
-
-
 class MCENV_PT_environment(bpy.types.Panel):
     bl_label='MCenv'
     bl_idname='MCENV_PT_environment'
@@ -176,7 +157,6 @@ class MCENV_PT_environment(bpy.types.Panel):
         section(layout,p,'tools','Blender tools')
         if p.fold_tools:
             layout.operator('mcenv.bind_wind',icon='MOD_WAVE'); layout.operator('mcenv.remove_wind')
-            geometry_section(layout,context.scene)
             row=layout.row(align=True); row.operator('mcenv.import_preset',text='Import preset'); row.operator('mcenv.export_preset',text='Export preset')
             layout.label(text='Image files are saved with .blend, not presets.',icon='INFO')
             layout.operator('mcenv.reset',icon='LOOP_BACK')
